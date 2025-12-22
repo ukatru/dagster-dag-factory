@@ -1,0 +1,5 @@
+# Import operators here to ensure they register themselves
+from dagster_dag_factory.operators.sql_to_s3 import SqlServerToS3Operator
+from dagster_dag_factory.operators.sftp_to_s3 import SftpToS3Operator
+from dagster_dag_factory.operators.s3_to_snowflake import S3ToSnowflakeOperator
+from dagster_dag_factory.operators.sql_server_check import SQLServerCheck

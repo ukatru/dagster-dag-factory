@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dagster-dag-factory"
+version = "0.0.1"
+dependencies = [
+    "dagster",
+    "dagster-webserver",
+    "pyodbc",
+    "snowflake-connector-python",
+    "dagster-snowflake",
+    "boto3",
+    "pandas",
+    "paramiko",
+    "pyyaml",
+    "pydantic"
+]
+
+[tool.setuptools]
+packages = ["dagster_dag_factory"]
+package-dir = {"" = "src"}

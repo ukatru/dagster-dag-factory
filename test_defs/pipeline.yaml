@@ -1,0 +1,12 @@
+
+assets:
+  - name: test_sql_to_s3
+    group: test_group
+    source:
+      type: SQLSERVER
+      connection: sqlserver_prod
+      query: "SELECT * FROM users"
+    target:
+      type: S3
+      connection: s3_prod
+      path: "data/users.csv"
