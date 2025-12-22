@@ -1,5 +1,4 @@
-from typing import Optional, Any, List, Callable
-from dagster import ConfigurableResource
+from typing import Optional, Any, List, Callable, ClassVar
 from pydantic import Field
 import paramiko
 import re
@@ -7,8 +6,9 @@ import os
 import stat
 from contextlib import contextmanager
 from dagster_dag_factory.models.file_info import FileInfo
+from .base import BaseConfigurableResource
 
-class SFTPResource(ConfigurableResource):
+class SFTPResource(BaseConfigurableResource):
     """
     Dagster resource for SFTP operations using Paramiko.
     """
@@ -18,6 +18,8 @@ class SFTPResource(ConfigurableResource):
     password: Optional[str] = Field(default=None, description="SFTP Password")
     private_key_path: Optional[str] = Field(default=None, description="Path to private key file")
     
+    mask_fields: ClassVar[List[str]] = BaseConfigurableResource.mask_fields + ["password"]
+
     @contextmanager
     def get_client(self):
         """Yields an SFTP client."""
@@ -50,19 +52,15 @@ class SFTPResource(ConfigurableResource):
         regex = re.compile(pattern) if pattern else None
 
         try:
-            # paramiko's listdir_attr returns SFTPAttributes which contain longname, st_size, st_mtime, etc.
             items = conn.listdir_attr(path)
         except FileNotFoundError:
-            # If path itself is a file (and pattern is None), handle single file case? 
-            # Or if user provided a full file path as 'path'
             try:
-                # check if it is a file
                 attr = conn.stat(path)
                 if not stat.S_ISDIR(attr.st_mode):
                     file_name = os.path.basename(path)
                     finfo = FileInfo(
                         file_name=file_name,
-                        file_path=file_name, # relative 
+                        file_path=file_name,
                         full_file_path=path,
                         file_size=attr.st_size,
                         modified_ts=attr.st_mtime
@@ -85,11 +83,9 @@ class SFTPResource(ConfigurableResource):
                      files.extend(self.list_files(conn, full_path, pattern, recursive, predicate))
                 continue
 
-            # It's a file
             if regex and not regex.match(filename):
                 continue
                 
-            # Create FileInfo
             finfo = FileInfo(
                 file_name=filename,
                 file_path=os.path.relpath(full_path, path) if recursive else filename, 
@@ -98,7 +94,6 @@ class SFTPResource(ConfigurableResource):
                 modified_ts=item.st_mtime
             )
             
-            # Apply predicate
             if predicate and not predicate(finfo):
                 continue
                 

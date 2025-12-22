@@ -1,10 +1,11 @@
-from typing import Optional, ContextManager, Iterator
+from typing import Optional, Iterator, List, ClassVar
 from contextlib import contextmanager
 import pyodbc
-from dagster import ConfigurableResource, InitResourceContext, get_dagster_logger
+from dagster import get_dagster_logger
 from pydantic import Field
+from .base import BaseConfigurableResource
 
-class SQLServerResource(ConfigurableResource):
+class SQLServerResource(BaseConfigurableResource):
     """
     Dagster resource for SQL Server connections.
     Wraps pyodbc to provide a clean interface for executing queries.
@@ -18,6 +19,8 @@ class SQLServerResource(ConfigurableResource):
     encrypt: bool = Field(default=True, description="Encrypt connection")
     trust_server_certificate: bool = Field(default=True, description="Trust server certificate (useful for self-signed)")
     
+    mask_fields: ClassVar[List[str]] = BaseConfigurableResource.mask_fields + ["password", "pwd"]
+
     @property
     def connection_string(self) -> str:
         conn_str = (
@@ -42,7 +45,6 @@ class SQLServerResource(ConfigurableResource):
     def _mask_conn_string(self, conn_str: str) -> str:
         """Masks sensitive information in connection string."""
         if "PWD=" in conn_str:
-            # Simple replace logic
             import re
             return re.sub(r'PWD=([^;]+)', 'PWD=******', conn_str)
         return conn_str
@@ -50,8 +52,10 @@ class SQLServerResource(ConfigurableResource):
     @contextmanager
     def get_connection(self) -> Iterator[pyodbc.Connection]:
         """Yields a raw pyodbc connection."""
-        # Log connection attempt (masked)
         logger = get_dagster_logger()
+        # Benefit from BaseConfigurableResource masking if logging the whole object
+        # logger.info(f"Connecting with resource: {self}")
+        
         masked_conn = self._mask_conn_string(self.connection_string)
         logger.info(f"Connecting to SQL Server: {masked_conn}")
         

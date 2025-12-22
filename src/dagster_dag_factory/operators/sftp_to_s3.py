@@ -7,28 +7,29 @@ import io
 import re
 import os
 
+from ..configs.sftp import SFTPConfig
+from ..configs.s3 import S3Config
+
 @OperatorRegistry.register(source="SFTP", target="S3")
 class SftpToS3Operator(BaseOperator):
-    def execute(self, context, source_config, target_config):
-        sftp_resource: SFTPResource = getattr(context.resources, source_config.get("connection"))
-        s3_resource: S3Resource = getattr(context.resources, target_config.get("connection"))
+    source_config_schema = SFTPConfig
+    target_config_schema = S3Config
+    
+    def execute(self, context, source_config: SFTPConfig, target_config: S3Config):
+        sftp_resource: SFTPResource = getattr(context.resources, source_config.connection)
+        s3_resource: S3Resource = getattr(context.resources, target_config.connection)
         
         # --- Source Configs ---
-        # standardize on 'path' but fallback to 'sftp_path'
-        sftp_path = source_config.get("path") or source_config.get("sftp_path")
-        if not sftp_path:
-             raise ValueError("Source must specify 'path'")
-             
-        pattern = source_config.get("pattern")
-        recursive = source_config.get("recursive", False)
-        predicate_expr = source_config.get("predicate") # e.g. "file_size > 1024"
+        sftp_path = source_config.path
+        pattern = source_config.pattern
+        recursive = source_config.recursive
+        predicate_expr = source_config.predicate
 
         # --- Target Configs ---
-        # standardize on 'key' vs 'prefix'
-        # s3_key: Explicit template or exact key
-        # s3_prefix: Directory prefix
-        s3_key_template = target_config.get("key") or target_config.get("s3_key")
-        s3_prefix = target_config.get("prefix") or target_config.get("s3_prefix")
+        # For S3 target, we use the path from S3Config
+        s3_key_template = target_config.path  # In SftpToS3, 'path' can be a template
+        # We don't have 'prefix' in S3Config anymore, but we can infer it or use path as prefix if it ends with /
+        s3_prefix = target_config.path if target_config.path.endswith('/') else None
 
         # --- Logic ---
         
@@ -37,7 +38,6 @@ class SftpToS3Operator(BaseOperator):
             if not predicate_expr:
                 return True
             try:
-                # Safe-ish eval context
                 eval_context = {
                     "file_name": info.file_name,
                     "file_size": info.file_size,
@@ -49,20 +49,16 @@ class SftpToS3Operator(BaseOperator):
             except Exception as e:
                 context.log.warning(f"Predicate eval failed for {info.file_name}: {e}")
                 return False
-
         # 2. Key Rendering Helper
         def render_s3_key(info: FileInfo) -> str:
-            # Template context
             render_ctx = {
                 "file_name": info.file_name,
                 "name": info.name,
                 "ext": info.ext,
-                "date": context.run_id, # Simplified, could be execution date
-                # Add more vars as needed
+                "date": context.run_id,
             }
             
-            if s3_key_template:
-                # Render template {{ var }}
+            if s3_key_template and ("{{" in s3_key_template):
                 key = s3_key_template
                 for k, v in render_ctx.items():
                     key = key.replace(f"{{{{ {k} }}}}", str(v))
@@ -71,7 +67,7 @@ class SftpToS3Operator(BaseOperator):
             elif s3_prefix:
                 return f"{s3_prefix.rstrip('/')}/{info.file_name}"
             else:
-                return info.file_name
+                return target_config.path # default use path as is
 
         transferred_files = []
         
@@ -91,13 +87,6 @@ class SftpToS3Operator(BaseOperator):
             for f_info in files:
                 target_key = render_s3_key(f_info)
                 context.log.info(f"Transferring {f_info.full_file_path} -> s3://{s3_resource.bucket_name}/{target_key}")
-                
-                # Streaming transfer
-                # Optimization: Use sftp.getfo directly to s3.upload_fileobj if possible? 
-                # Boto3 upload_fileobj accepts a file-like object.
-                # However, sftp.getfo writes TO a file-like object. 
-                # So we need a buffer or a pipe. Memory buffer is safest for small/medium files.
-                # For huge files, multipart upload with pipes is complex. Sticking to memory buffer for now.
                 
                 mem_file = io.BytesIO()
                 sftp.getfo(f_info.full_file_path, mem_file)

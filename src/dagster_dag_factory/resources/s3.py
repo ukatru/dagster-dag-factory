@@ -1,16 +1,18 @@
-from typing import Optional, Any
+from typing import Optional, Any, List, ClassVar
 import boto3
 import os
 import uuid
-from dagster import ConfigurableResource
 from pydantic import Field
 import io
+from .base import BaseConfigurableResource
 
-class S3Resource(ConfigurableResource):
+class S3Resource(BaseConfigurableResource):
     """
     Dagster resource for S3 operations with enterprise authentication support.
     Supports explicit keys, profiles, and EKS Web Identity (IRSA).
     """
+    mask_fields: ClassVar[List[str]] = BaseConfigurableResource.mask_fields + ["access_key", "secret_key", "session_token"]
+    
     bucket_name: str = Field(description="Default bucket name")
     
     # Auth: Explicit Keys
@@ -39,13 +41,11 @@ class S3Resource(ConfigurableResource):
         3. Web Identity (IRSA) / Role Assumption
         4. Default Chain (Env vars, Instance Profile)
         """
-        # 1. Base Session Creation
         session_kwargs = {
             "region_name": self.region_name,
             "profile_name": self.profile_name
         }
         
-        # Add explicit keys if present
         if self.access_key and self.secret_key:
             session_kwargs.update({
                 "aws_access_key_id": self.access_key,
@@ -55,30 +55,25 @@ class S3Resource(ConfigurableResource):
             
         session = boto3.Session(**session_kwargs)
 
-        # 2. Handle Role Assumption (IRSA or Simple AssumeRole)
         if self.assume_role_arn:
             sts_client = session.client('sts')
             role_session_name = self.assume_role_session_name or f"dagster-{uuid.uuid4()}"
             
-            # Check for IRSA (Web Identity) first
             web_identity_token = None
             if self.aws_web_identity_token_file:
                 with open(self.aws_web_identity_token_file, 'r') as f:
                     web_identity_token = f.read()
             elif os.environ.get("AWS_WEB_IDENTITY_TOKEN_FILE") and not self.access_key:
-                # Fallback to env var if explicit keys not provided
                 with open(os.environ["AWS_WEB_IDENTITY_TOKEN_FILE"], 'r') as f:
                     web_identity_token = f.read()
 
             if web_identity_token:
-                # IRSA
                 sts_response = sts_client.assume_role_with_web_identity(
                     RoleArn=self.assume_role_arn,
                     RoleSessionName=role_session_name,
                     WebIdentityToken=web_identity_token
                 )
             else:
-                # Standard AssumeRole
                 assume_kwargs = {
                     "RoleArn": self.assume_role_arn,
                     "RoleSessionName": role_session_name
@@ -99,9 +94,7 @@ class S3Resource(ConfigurableResource):
         return session
 
     def get_client(self) -> Any:
-        """Returns a boto3 s3 client using the configured session."""
         session = self.get_session()
-        
         config = None
         if self.use_unsigned_session:
             from botocore import UNSIGNED
@@ -116,18 +109,14 @@ class S3Resource(ConfigurableResource):
         )
 
     def write_csv(self, key: str, data: list, headers: list = None) -> None:
-        """Writes a list of dicts or list of lists to CSV in S3."""
         if not data:
             return
-
         import pandas as pd
         df = pd.DataFrame(data)
         if headers:
             df = df[headers]
-            
         csv_buffer = io.StringIO()
         df.to_csv(csv_buffer, index=False)
-        
         self.get_client().put_object(
             Bucket=self.bucket_name,
             Key=key,
@@ -135,17 +124,19 @@ class S3Resource(ConfigurableResource):
         )
 
     def write_parquet(self, key: str, data: list) -> None:
-        """Writes a list of dicts to Parquet in S3."""
         if not data:
             return
-
         import pandas as pd
         df = pd.DataFrame(data)
         parquet_buffer = io.BytesIO()
         df.to_parquet(parquet_buffer, index=False)
-        
         self.get_client().put_object(
             Bucket=self.bucket_name,
             Key=key,
             Body=parquet_buffer.getvalue()
         )
+
+    def read_csv_sample(self, key: str, nrows: int = 10, delimiter: str = ",") -> Any:
+        import pandas as pd
+        response = self.get_client().get_object(Bucket=self.bucket_name, Key=key, Range='bytes=0-10240')
+        return pd.read_csv(response["Body"], nrows=nrows, sep=delimiter)

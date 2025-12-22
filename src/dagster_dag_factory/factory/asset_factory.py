@@ -256,7 +256,29 @@ class AssetFactory:
                 rendered_source = self._render_config(source_conf, template_vars)
                 rendered_target = self._render_config(target_conf, template_vars)
 
-                operator.execute(context, rendered_source, rendered_target)
+                # Validate using Op schemas if provided
+                if operator.source_config_schema:
+                    try:
+                        validated_source = operator.source_config_schema(**rendered_source)
+                    except Exception as e:
+                        context.log.error(f"Source configuration validation failed: {e}")
+                        raise
+                else:
+                    validated_source = rendered_source
+
+                if operator.target_config_schema:
+                    try:
+                        validated_target = operator.target_config_schema(**rendered_target)
+                    except Exception as e:
+                        context.log.error(f"Target configuration validation failed: {e}")
+                        raise
+                else:
+                    validated_target = rendered_target
+
+                # Log configurations for troubleshooting
+                operator.log_configs(context, validated_source, validated_target)
+
+                operator.execute(context, validated_source, validated_target)
                 return None
 
         @asset(

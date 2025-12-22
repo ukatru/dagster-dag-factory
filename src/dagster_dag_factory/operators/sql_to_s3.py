@@ -2,43 +2,26 @@ from dagster_dag_factory.factory.base_operator import BaseOperator
 from dagster_dag_factory.factory.registry import OperatorRegistry
 from dagster_dag_factory.resources.sqlserver import SQLServerResource
 from dagster_dag_factory.resources.s3 import S3Resource
-import json
+from ..configs.sqlserver import SQLServerConfig
+from ..configs.s3 import S3Config
 
 @OperatorRegistry.register(source="SQLSERVER", target="S3")
 class SqlServerToS3Operator(BaseOperator):
+    source_config_schema = SQLServerConfig
+    target_config_schema = S3Config
     
-    def _mask_config(self, config: dict) -> dict:
-        """Deep copy and mask sensitive keys."""
-        masked = config.copy()
-        sensitive_keys = ['password', 'secret', 'key', 'token', 'pwd']
-        for k in masked:
-            if isinstance(masked[k], str):
-                if any(s in k.lower() for s in sensitive_keys):
-                    masked[k] = "******"
-            elif isinstance(masked[k], dict):
-                 masked[k] = self._mask_config(masked[k])
-        return masked
-
-    def execute(self, context, source_config, target_config):
-        # 1. Detailed Logging
-        context.log.info("=== Operator Execution: SQLSERVER -> S3 ===")
-        context.log.info(f"Source Config: {json.dumps(self._mask_config(source_config), indent=2)}")
-        context.log.info(f"Target Config: {json.dumps(self._mask_config(target_config), indent=2)}")
-
+    def execute(self, context, source_config: SQLServerConfig, target_config: S3Config):
         # Retrieve injected resources via config key "connection"
-        source_conn_key = source_config.get("connection")
-        target_conn_key = target_config.get("connection")
+        sql_resource: SQLServerResource = getattr(context.resources, source_config.connection)
+        s3_resource: S3Resource = getattr(context.resources, target_config.connection)
         
-        sql_resource: SQLServerResource = getattr(context.resources, source_conn_key)
-        s3_resource: S3Resource = getattr(context.resources, target_conn_key)
-        
-        query = source_config.get("query")
+        query = source_config.query
         
         # Resource handles detailed query logging now
         data = sql_resource.execute_query(query)
         
-        s3_key = target_config.get("path")
-        s3_format = target_config.get("format", "csv").lower()
+        s3_key = target_config.path
+        s3_format = (target_config.format or "csv").lower()
         
         context.log.info(f"Writing {len(data)} rows to s3://{s3_resource.bucket_name}/{s3_key}")
         
