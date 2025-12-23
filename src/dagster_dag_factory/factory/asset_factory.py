@@ -207,6 +207,10 @@ class AssetFactory:
         target = config.get("target", {})
         deps = config.get("deps", [])
         
+        # Metadata and Tags
+        metadata = config.get("metadata")
+        tags = config.get("tags")
+
         # Partition Support
         partitions_def = PartitionFactory.get_partitions_def(config.get("partitions_def"))
         
@@ -290,7 +294,9 @@ class AssetFactory:
             partitions_def=partitions_def,
             backfill_policy=backfill_policy,
             auto_materialize_policy=automation_policy,
-            freshness_policy=freshness_policy
+            freshness_policy=freshness_policy,
+            metadata=metadata,
+            tags=tags
         )
         def _generated_asset(context: AssetExecutionContext, **kwargs):
             return logic(context, source, target)
