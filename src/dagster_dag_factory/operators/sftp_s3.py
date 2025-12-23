@@ -8,7 +8,7 @@ import re
 import os
 
 from dagster_dag_factory.configs.sftp import SFTPConfig
-from dagster_dag_factory.configs.s3 import S3Config
+from dagster_dag_factory.configs.s3 import S3Config, S3Mode
 
 @OperatorRegistry.register(source="SFTP", target="S3")
 class SftpS3Operator(BaseOperator):
@@ -35,9 +35,9 @@ class SftpS3Operator(BaseOperator):
         check_modifying = source_config.check_is_modifying
         
         # --- Target Configs ---
-        compress_cfg = target_config.compress_options
-        s3_key_template = target_config.path 
-        s3_prefix = target_config.path if target_config.path.endswith('/') else None
+        # Niagara standard: key often acts as template or prefix
+        s3_key_template = target_config.key 
+        s3_prefix = target_config.prefix or (target_config.key if target_config.key and target_config.key.endswith('/') else None)
 
         # --- Logic ---
         
@@ -85,7 +85,7 @@ class SftpS3Operator(BaseOperator):
             elif s3_prefix:
                 return f"{s3_prefix.rstrip('/')}/{info.file_name}"
             else:
-                return target_config.path 
+                return target_config.key or info.file_name
 
         transferred_files = []
 
@@ -93,13 +93,14 @@ class SftpS3Operator(BaseOperator):
         def transfer_callback(f_info: FileInfo, index: int) -> bool:
             try:
                 base_target_key = render_s3_key(f_info)
-                context.log.info(f"Processing {f_info.full_file_path} -> s3://{s3_resource.bucket_name}/{base_target_key}")
+                context.log.info(f"Processing {f_info.full_file_path} -> {base_target_key}")
 
                 # Use Push Model (Smart Buffer + getfo)
                 smart_buffer = s3_resource.create_smart_buffer(
+                    bucket_name=target_config.bucket_name,
                     key=base_target_key,
-                    multi_file=target_config.multi_file,
-                    chunk_size_mb=target_config.chunk_size_mb,
+                    multi_file=(target_config.mode == S3Mode.MULTI_FILE),
+                    min_size=target_config.min_size,
                     compress_options=target_config.compress_options,
                     logger=context.log
                 )

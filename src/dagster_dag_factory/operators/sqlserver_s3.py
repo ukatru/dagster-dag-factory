@@ -20,14 +20,14 @@ class SqlServerS3Operator(BaseOperator):
         # Resource handles detailed query logging now
         data = sql_resource.execute_query(query)
         
-        s3_key = target_config.path
-        s3_format = (target_config.format or "csv").lower()
+        s3_key = target_config.key
+        s3_format = (target_config.object_type or "csv").lower()
         
-        context.log.info(f"Writing {len(data)} rows to s3://{s3_resource.bucket_name}/{s3_key}")
+        context.log.info(f"Writing {len(data)} rows to {s3_key}")
         
         if s3_format == "parquet":
-            s3_resource.write_parquet(s3_key, data)
+            s3_resource.write_parquet(target_config.bucket_name, s3_key, data)
         else:
-            s3_resource.write_csv(s3_key, data)
+            s3_resource.write_csv(target_config.bucket_name, s3_key, data)
             
         return {"rows": len(data), "path": s3_key, "source": "SQLSERVER", "target": "S3"}

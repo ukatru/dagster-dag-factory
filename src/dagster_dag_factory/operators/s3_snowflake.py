@@ -23,22 +23,22 @@ class S3SnowflakeOperator(BaseOperator):
         snow_resource: SnowflakeResource = getattr(context.resources, target_config.connection)
         
         # Configs
-        s3_path = source_config.path
-        s3_bucket = s3_resource.bucket_name
+        s3_path = source_config.key
+        s3_bucket = source_config.bucket_name
         
         table = target_config.table
         stage = target_config.stage
-        file_format_type = source_config.format.upper()
+        file_format_type = source_config.object_type.upper()
         match_columns = target_config.match_columns
         
-        # 1. Build File Format String
         file_format_sql = f"TYPE = '{file_format_type}'"
-        if file_format_type == 'CSV':
-            delimiter = source_config.delimiter
+        if file_format_type == 'CSV' and source_config.csv_options:
+            delimiter = source_config.csv_options.delimiter or source_config.delimiter or ','
             if match_columns:
                 file_format_sql += " PARSE_HEADER = TRUE"
             else:
-                skip_header = source_config.skip_header
+                # Map has_headers to SKIP_HEADER for Snowflake if match_columns is false
+                skip_header = 1 if source_config.csv_options.has_headers else 0
                 file_format_sql += f" SKIP_HEADER = {skip_header}"
             
             file_format_sql += f" FIELD_DELIMITER = '{delimiter}'"
@@ -46,12 +46,12 @@ class S3SnowflakeOperator(BaseOperator):
 
         force = target_config.force
         schema_strategy = target_config.schema_strategy.lower()
-        delimiter = source_config.delimiter
+        delimiter = (source_config.csv_options.delimiter if source_config.csv_options else None) or source_config.delimiter or ','
         
         # 2. Handle Schema Strategy
         if schema_strategy != "fail":
             self._apply_schema_strategy(
-                context, snow_resource, s3_resource, table, stage, s3_path, 
+                context, snow_resource, s3_resource, s3_bucket, table, stage, s3_path, 
                 file_format_sql, file_format_type, schema_strategy, delimiter
             )
 
@@ -89,7 +89,7 @@ class S3SnowflakeOperator(BaseOperator):
             context.log.error(f"Copy failed: {e}")
             raise
 
-    def _apply_schema_strategy(self, context, snow_resource: SnowflakeResource, s3_resource: S3Resource, table, stage, s3_path, file_format_sql, file_format_type, strategy, delimiter):
+    def _apply_schema_strategy(self, context, snow_resource: SnowflakeResource, s3_resource: S3Resource, bucket_name, table, stage, s3_path, file_format_sql, file_format_type, strategy, delimiter):
         context.log.info(f"Applying schema strategy: {strategy} for table {table}")
         
         # 1. Check if table exists
@@ -111,7 +111,7 @@ class S3SnowflakeOperator(BaseOperator):
             # Native Snowflake INFER_SCHEMA doesn't support CSV properly.
             # We use Pandas to peek at the file in S3.
             try:
-                df_sample = s3_resource.read_csv_sample(s3_path, delimiter=delimiter)
+                df_sample = s3_resource.read_csv_sample(bucket_name, s3_path, delimiter=delimiter)
                 # Map Pandas types to Snowflake types (simplified)
                 # int64 -> NUMBER
                 # float64 -> FLOAT

@@ -12,7 +12,8 @@ class BaseConfigModel(BaseModel):
         arbitrary_types_allowed=True
     )
     
-    mask_fields: ClassVar[List[str]] = ["password", "secret", "key", "token", "token_file"]
+    # Sensible defaults for sensitive fields to mask in logs
+    mask_fields: ClassVar[List[str]] = ["password", "secret", "token", "token_file"]
 
     def to_masked_dict(self) -> dict:
         """Returns a dictionary with sensitive fields masked."""

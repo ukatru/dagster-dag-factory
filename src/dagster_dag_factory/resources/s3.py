@@ -1,13 +1,16 @@
-from typing import Optional, Any, List, ClassVar, Union, IO
+from typing import Optional, Any, List, ClassVar, Union, IO, Callable
 import boto3
 import os
 import uuid
 import sys
 import threading
+import re
+import time
 from pydantic import Field
 import io
 from dagster_dag_factory.resources.base import BaseConfigurableResource
 from dagster_dag_factory.configs.compression import CompressConfig
+from dagster_dag_factory.models.s3_info import S3Info
 
 class ProgressPercentage(object):
     def __init__(self, filename: str, size: float, logger=None):
@@ -31,17 +34,19 @@ class SafeSplitBuffer:
     def __init__(
         self,
         s3_resource: 'S3Resource',
+        bucket_name: str,
         key: str,
         multi_file: bool = False,
-        chunk_size_mb: int = 100,
+        min_size: int = 5,
         compress_options: Optional[CompressConfig] = None,
         logger: Any = None,
         max_workers: int = 5
     ):
         self.s3_resource = s3_resource
+        self.bucket_name = bucket_name
         self.key = key
         self.multi_file = multi_file
-        self.chunk_size = chunk_size_mb * 1024 * 1024
+        self.chunk_size = min_size * 1024 * 1024
         self.compress_options = compress_options
         self.logger = logger
         
@@ -138,7 +143,7 @@ class SafeSplitBuffer:
             
             # Upload
             self.s3_client.put_object(
-                Bucket=self.s3_resource.bucket_name,
+                Bucket=self.bucket_name,
                 Key=final_key,
                 Body=final_data
             )
@@ -183,7 +188,7 @@ class S3Resource(BaseConfigurableResource):
     """
     mask_fields: ClassVar[List[str]] = BaseConfigurableResource.mask_fields + ["access_key", "secret_key", "session_token"]
     
-    bucket_name: str = Field(description="Default bucket name")
+    
     
     # Auth: Explicit Keys
     access_key: Optional[str] = Field(default=None, description="AWS Access Key ID")
@@ -198,10 +203,10 @@ class S3Resource(BaseConfigurableResource):
     
     # Configuration
     region_name: str = Field(default="us-east-1", description="AWS Region")
-    endpoint_url: Optional[str] = Field(default=None, description="Custom endpoint URL (e.g. for MinIO)")
+    endpoint_url: Optional[str] = Field(default="http://localhost:9000", description="Custom endpoint URL (e.g. for MinIO)")
     profile_name: Optional[str] = Field(default=None, description="AWS Profile name")
     use_unsigned_session: bool = Field(default=False, description="Use unsigned session")
-    verify: bool = Field(default=True, description="Verify SSL certificates")
+    verify: bool = Field(default=False, description="Verify SSL certificates")
 
     def get_session(self) -> boto3.Session:
         """
@@ -278,7 +283,7 @@ class S3Resource(BaseConfigurableResource):
             config=config
         )
 
-    def write_csv(self, key: str, data: list, headers: list = None) -> None:
+    def write_csv(self, bucket_name: str, key: str, data: list, headers: list = None) -> None:
         if not data:
             return
         import pandas as pd
@@ -288,12 +293,12 @@ class S3Resource(BaseConfigurableResource):
         csv_buffer = io.StringIO()
         df.to_csv(csv_buffer, index=False)
         self.get_client().put_object(
-            Bucket=self.bucket_name,
+            Bucket=bucket_name,
             Key=key,
             Body=csv_buffer.getvalue()
         )
 
-    def write_parquet(self, key: str, data: list) -> None:
+    def write_parquet(self, bucket_name: str, key: str, data: list) -> None:
         if not data:
             return
         import pandas as pd
@@ -301,21 +306,22 @@ class S3Resource(BaseConfigurableResource):
         parquet_buffer = io.BytesIO()
         df.to_parquet(parquet_buffer, index=False)
         self.get_client().put_object(
-            Bucket=self.bucket_name,
+            Bucket=bucket_name,
             Key=key,
             Body=parquet_buffer.getvalue()
         )
 
-    def read_csv_sample(self, key: str, nrows: int = 10, delimiter: str = ",") -> Any:
+    def read_csv_sample(self, bucket_name: str, key: str, nrows: int = 10, delimiter: str = ",") -> Any:
         import pandas as pd
-        response = self.get_client().get_object(Bucket=self.bucket_name, Key=key, Range='bytes=0-10240')
+        response = self.get_client().get_object(Bucket=bucket_name, Key=key, Range='bytes=0-10240')
         return pd.read_csv(response["Body"], nrows=nrows, sep=delimiter)
 
     def create_smart_buffer(
         self,
+        bucket_name: str,
         key: str,
         multi_file: bool = False,
-        chunk_size_mb: int = 100,
+        min_size: int = 5,
         compress_options: Optional[CompressConfig] = None,
         logger: Any = None,
         max_workers: int = 5
@@ -326,10 +332,92 @@ class S3Resource(BaseConfigurableResource):
         """
         return SafeSplitBuffer(
             s3_resource=self,
+            bucket_name=bucket_name,
             key=key,
             multi_file=multi_file,
-            chunk_size_mb=chunk_size_mb,
+            min_size=min_size,
             compress_options=compress_options,
             logger=logger,
             max_workers=max_workers
         )
+
+    def list_files(
+        self,
+        bucket_name: Optional[str] = None,
+        prefix: str = "",
+        pattern: str = None,
+        delimiter: str = None,
+        check_is_modifing: bool = False,
+        predicate: Union[str, Callable[[S3Info], bool]] = None,
+        on_each: Callable[[S3Info, int], bool] = None
+    ) -> List[S3Info]:
+        """
+        List objects in an S3 bucket with filtering and callbacks.
+        
+        :param bucket_name: Bucket to list from (defaults to resource default)
+        :param prefix: Key prefix
+        :param pattern: Regex pattern to match keys
+        :param delimiter: Delimiter for hierarchy
+        :param check_is_modifing: If True, skips objects modified in the last 60s
+        :param predicate: Python expression (str) or callable for filtering
+        :param on_each: Callback for each matched object. If returns False, stops listing.
+        """
+        bucket = bucket_name
+        if not bucket:
+            raise ValueError("bucket_name must be provided for list_files")
+        client = self.get_client()
+        
+        regex = re.compile(pattern) if pattern else None
+        infos: List[S3Info] = []
+        
+        paginator = client.get_paginator('list_objects_v2')
+        paginate_kwargs = {'Bucket': bucket, 'Prefix': prefix}
+        if delimiter:
+            paginate_kwargs['Delimiter'] = delimiter
+            
+        for page in paginator.paginate(**paginate_kwargs):
+            if 'Contents' not in page:
+                continue
+                
+            for obj in page['Contents']:
+                key = obj['Key']
+                
+                # Regex match
+                if regex and not regex.match(key):
+                    continue
+                    
+                info = S3Info(
+                    bucket_name=bucket,
+                    key=key,
+                    prefix=prefix,
+                    size=obj['Size'],
+                    modified_dt=obj['LastModified'],
+                    storage_class=obj.get('StorageClass')
+                )
+                
+                # Check if modifying (min 60s idle)
+                if check_is_modifing:
+                    if (time.time() - info.modified_ts) < 60:
+                        continue
+                
+                # Predicate filter
+                if predicate:
+                    if isinstance(predicate, str):
+                        # Evaluate string predicate with info context
+                        if not eval(predicate, {"info": info, "re": re}):
+                            continue
+                    elif callable(predicate):
+                        if not predicate(info):
+                            continue
+                
+                # Callback and collection
+                index = len(infos) + 1
+                if on_each:
+                    should_continue = on_each(info, index)
+                    infos.append(info)
+                    if should_continue is False:
+                        return infos
+                else:
+                    infos.append(info)
+                    
+        return infos

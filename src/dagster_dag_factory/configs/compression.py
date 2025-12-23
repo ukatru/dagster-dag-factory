@@ -16,5 +16,5 @@ class CompressConfig(BaseConfigModel):
     Configuration for file compression/decompression.
     Adapted from Niagara legacy configs.
     """
-    type: CompressionType = Field(default=CompressionType.GUNZIP, description="Type of compression (ZIPFILE, GUNZIP)")
-    action: CompressionAction = Field(default=CompressionAction.COMPRESS, description="Action to perform (COMPRESS, DECOMPRESS)")
+    compress_type: Optional[CompressionType] = Field(default=None, description="Type of compression (ZIPFILE, GUNZIP)")
+    action: Optional[CompressionAction] = Field(default=None, description="Action to perform (COMPRESS, DECOMPRESS)")

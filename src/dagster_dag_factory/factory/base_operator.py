@@ -21,22 +21,39 @@ class BaseOperator(ABC):
 
     def log_configs(self, context, source_config: Any, target_config: Any):
         """Logs the rendered configurations for troubleshooting."""
+        import json
         
+        def get_masked_cfg(config):
+            if hasattr(config, "to_masked_dict"):
+                masked_cfg = config.to_masked_dict()
+            elif isinstance(config, dict):
+                masked_cfg = self._mask_dict(config)
+            else:
+                masked_cfg = {"config": str(config)}
+            
+            # Try to enrich with connection details
+            connection_name = None
+            if isinstance(config, dict):
+                connection_name = config.get("connection")
+            elif hasattr(config, "connection"):
+                connection_name = config.connection
+                
+            if connection_name and hasattr(context, "resources"):
+                # Dagster resources are accessed via attributes on context.resources
+                resource = getattr(context.resources, connection_name, None)
+                if resource and hasattr(resource, "to_masked_dict"):
+                    masked_cfg["connection_details"] = resource.to_masked_dict()
+                elif resource:
+                    # Fallback for resources that don't inherit from our base
+                    masked_cfg["connection_details"] = {"type": str(type(resource))}
+            
+            return masked_cfg
+
         # Log Source
-        if isinstance(source_config, BaseConfigModel):
-            context.log.info(f"Source Configuration:\n{source_config.to_masked_json()}")
-        else:
-            import json
-            masked_source = self._mask_dict(source_config)
-            context.log.info(f"Source Configuration:\n{json.dumps(masked_source, indent=2)}")
+        context.log.info(f"Source Configuration:\n{json.dumps(get_masked_cfg(source_config), indent=2, default=str)}")
 
         # Log Target
-        if isinstance(target_config, BaseConfigModel):
-            context.log.info(f"Target Configuration:\n{target_config.to_masked_json()}")
-        else:
-            import json
-            masked_target = self._mask_dict(target_config)
-            context.log.info(f"Target Configuration:\n{json.dumps(masked_target, indent=2)}")
+        context.log.info(f"Target Configuration:\n{json.dumps(get_masked_cfg(target_config), indent=2, default=str)}")
 
     def _mask_dict(self, d: Any) -> Any:
         if isinstance(d, dict):
