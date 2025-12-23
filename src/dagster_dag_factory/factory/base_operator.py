@@ -13,7 +13,7 @@ class BaseOperator(ABC):
     target_config_schema: Optional[Type[BaseConfigModel]] = None
     
     @abstractmethod
-    def execute(self, context, source_config: Dict[str, Any], target_config: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, context, source_config: Any, target_config: Any, template_vars: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute the operator logic.
         """

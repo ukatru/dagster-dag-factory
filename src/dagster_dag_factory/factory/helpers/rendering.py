@@ -1,5 +1,19 @@
 import re
-from typing import Any, Dict
+from typing import Any, Dict, TypeVar
+from pydantic import BaseModel
+
+T = TypeVar("T", bound=BaseModel)
+
+def render_config_model(model: T, template_vars: Dict[str, Any]) -> T:
+    """
+    Renders an existing Pydantic model by converting to dict, rendering, 
+    and re-instantiating. Useful for runtime overrides (e.g., inside a loop).
+    """
+    # Convert to dict, including extras
+    model_dict = model.model_dump()
+    rendered_dict = render_config(model_dict, template_vars)
+    # Re-instantiate as the same type
+    return type(model)(**rendered_dict)
 
 def render_config(d: Any, template_vars: Dict[str, Any]) -> Any:
     """
@@ -33,22 +47,20 @@ def render_config(d: Any, template_vars: Dict[str, Any]) -> Any:
 def _get_value_at_path(path: str, template_vars: Dict[str, Any], interpolate: bool) -> Any:
     parts = path.split('.')
     curr = template_vars
-    for part in parts:
+    for i, part in enumerate(parts):
+        is_last = (i == len(parts) - 1)
+        
         if isinstance(curr, dict) and part in curr:
             curr = curr[part]
         elif hasattr(curr, part):
-            # If it's the 'env' accessor and we are interpolating, use get_raw
-            if part == parts[-1] and hasattr(curr, "get_raw") and interpolate:
-                 # This is a bit specific to EnvVarAccessor but helps with "host: {{env.HOST}}"
-                 # Actually, better to checks if we are at the end
-                 pass 
+            # Special handling for EnvVarAccessor (env.)
+            if hasattr(curr, "get_raw") and interpolate and not isinstance(getattr(curr, part), (dict, list)):
+                # If we are at the target property and it's an EnvVarAccessor, get raw value
+                # but only if it's the leaf node or we want interpolation
+                if is_last:
+                    return curr.get_raw(part)
             
-            # Use getattr for EnvVarAccessor or regular objects
-            res = getattr(curr, part)
-            if interpolate and hasattr(curr, "get_raw") and not isinstance(res, (dict, list)):
-                # If we have a get_raw method, use it for interpolation
-                return curr.get_raw(part)
-            return res
+            curr = getattr(curr, part)
         else:
             return f"{{{{{path}}}}}"
     return curr

@@ -28,6 +28,7 @@ from dagster_dag_factory.factory.partition_factory import PartitionFactory
 from dagster_dag_factory.factory.helpers.rendering import render_config
 from dagster_dag_factory.factory.helpers.config_loaders import load_env_vars
 from dagster_dag_factory.factory.helpers.env_accessor import EnvVarAccessor
+from dagster_dag_factory.factory.helpers.dynamic import Dynamic
 from dagster_dag_factory.factory.helpers.dagster_helpers import (
     get_backfill_policy,
     get_partition_mapping,
@@ -101,7 +102,7 @@ class AssetFactory:
                 template_vars["partition_key"] = pk
         
         # Add vars and env
-        template_vars["vars"] = self.env_vars
+        template_vars["vars"] = Dynamic(self.env_vars)
         template_vars["env"] = EnvVarAccessor()
         
         return template_vars
@@ -205,33 +206,39 @@ class AssetFactory:
             def logic(context, source_conf, target_conf):
                 template_vars = self._get_template_vars(context)
                 
-                # Render source and target configs
+                # Render source FIRST
                 rendered_source = render_config(source_conf, template_vars)
-                rendered_target = render_config(target_conf, template_vars)
-
-                # Validate using Op schemas if provided
+                
+                # Validate source if schema exists
                 if operator.source_config_schema:
                     try:
-                        validated_source = operator.source_config_schema(**rendered_source)
+                        source_model = operator.source_config_schema(**rendered_source)
+                        template_vars["source"] = source_model
                     except Exception as e:
                         context.log.error(f"Source configuration validation failed: {e}")
                         raise
                 else:
-                    validated_source = rendered_source
+                    dynamic_source = Dynamic(rendered_source)
+                    template_vars["source"] = dynamic_source
+                    source_model = dynamic_source
+                
+                # Render target SECOND (now has access to source model)
+                rendered_target = render_config(target_conf, template_vars)
 
+                # Validate target if schema exists
                 if operator.target_config_schema:
                     try:
-                        validated_target = operator.target_config_schema(**rendered_target)
+                        target_model = operator.target_config_schema(**rendered_target)
                     except Exception as e:
                         context.log.error(f"Target configuration validation failed: {e}")
                         raise
                 else:
-                    validated_target = rendered_target
+                    target_model = rendered_target
 
                 # Log configurations for troubleshooting
-                operator.log_configs(context, validated_source, validated_target)
+                operator.log_configs(context, source_model, target_model)
 
-                operator.execute(context, validated_source, validated_target)
+                operator.execute(context, source_model, target_model, template_vars)
                 return None
 
         @asset(

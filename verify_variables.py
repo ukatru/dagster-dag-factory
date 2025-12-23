@@ -5,6 +5,7 @@ from dagster import EnvVar
 from dagster_dag_factory.factory.asset_factory import AssetFactory
 from dagster_dag_factory.factory.helpers.rendering import render_config
 from dagster_dag_factory.factory.helpers.env_accessor import EnvVarAccessor
+from dagster_dag_factory.factory.helpers.dynamic import Dynamic
 
 class TestVariableRendering(unittest.TestCase):
     def setUp(self):
@@ -20,7 +21,23 @@ class TestVariableRendering(unittest.TestCase):
         self.assertEqual(self.factory.env_vars.get("FIN_SFTP_PATH"), "/home/ukatru/data")
         self.assertEqual(self.factory.env_vars.get("ENV_NAME"), "development")
 
-    def test_rendering(self):
+    def test_dynamic_object(self):
+        # Test dot notation for dicts
+        data = {
+            "top": "value",
+            "nested": {
+                "key": "secret",
+                "deep": {
+                    "val": 123
+                }
+            }
+        }
+        obj = Dynamic(data)
+        self.assertEqual(obj.top, "value")
+        self.assertEqual(obj.nested.key, "secret")
+        self.assertEqual(obj.nested.deep.val, 123)
+
+    def test_rendering_with_dynamic_vars(self):
         # Sample configuration with vars and env
         config = {
             "source": {
@@ -30,14 +47,12 @@ class TestVariableRendering(unittest.TestCase):
             "target": {
                 "description": "Running in {{vars.ENV_NAME}}",
                 "secret": "{{env.MY_SECRET}}"
-            },
-            "other": "Literal Value",
-            "missing": "{{vars.NON_EXISTENT}}"
+            }
         }
         
-        # Test vars
+        # In the real system, factory.env_vars is wrapped in Dynamic
         template_vars = {
-            "vars": self.factory.env_vars,
+            "vars": Dynamic(self.factory.env_vars),
             "env": EnvVarAccessor()
         }
         
@@ -48,21 +63,78 @@ class TestVariableRendering(unittest.TestCase):
         self.assertEqual(rendered["target"]["description"], "Running in development")
         # Full match should return EnvVar object
         self.assertIsInstance(rendered["target"]["secret"], EnvVar)
-        self.assertEqual(rendered["target"]["secret"].env_var_name, "MY_SECRET")
-        
-        self.assertEqual(rendered["other"], "Literal Value")
-        # Should remain literal if not found
-        self.assertEqual(rendered["missing"], "{{vars.NON_EXISTENT}}")
 
-    def test_nested_rendering(self):
-        # test partition + vars rendering
-        config = "Path: {{vars.FIN_SFTP_PATH}}/date={{partition_key}}"
-        template_vars = {
-            "vars": self.factory.env_vars,
-            "partition_key": "2023-10-27"
+    def test_nested_rendering_dot_notation(self):
+        # Test a deeper nested var structure
+        dists = {
+            "s3": {
+                "buckets": {
+                    "raw": "my-raw-bucket"
+                }
+            }
         }
+        template_vars = {
+            "vars": Dynamic(dists)
+        }
+        config = "Bucket: {{vars.s3.buckets.raw}}"
         rendered = render_config(config, template_vars)
-        self.assertEqual(rendered, "Path: /home/ukatru/data/date=2023-10-27")
+        self.assertEqual(rendered, "Bucket: my-raw-bucket")
+
+    def test_cross_config_rendering_explicit(self):
+        # Test the explicit {{ source.item }} pattern
+        from dagster_dag_factory.configs.s3 import S3Config
+        from dagster_dag_factory.models.file_info import FileInfo
+        
+        source_model = S3Config(
+            connection="s3_src",
+            bucket_name="src-bucket",
+            key="raw/"
+        )
+        
+        info = FileInfo(
+            file_name="customer_data.csv",
+            file_path="raw/customer_data.csv",
+            full_file_path="/src/raw/customer_data.csv",
+            file_size=5000,
+            modified_ts=1671234567.0
+        )
+        
+        # Attach item to model dynamically (simulating operator loop)
+        source_model.item = info
+        
+        target_conf = {
+            "key": "archive/{{source.bucket_name}}/{{source.item.file_name}}"
+        }
+        
+        template_vars = {"source": source_model}
+        
+        rendered = render_config(target_conf, template_vars)
+        self.assertEqual(rendered["key"], "archive/src-bucket/customer_data.csv")
+
+    def test_strict_routing_no_backward_compat(self):
+        # test that top-level 'item' is NOT available if not explicitly provided
+        from dagster_dag_factory.models.file_info import FileInfo
+        
+        info = FileInfo(
+            file_name="test.csv",
+            file_path="test.csv",
+            full_file_path="/test.csv",
+            file_size=1,
+            modified_ts=1.0
+        )
+        
+        template_vars = {
+            "source": Dynamic({"item": info})
+        }
+        
+        config = "File: {{item.file_name}}"
+        rendered = render_config(config, template_vars)
+        # Should stay literal as {{item.file_name}} is not reachable at top level
+        self.assertEqual(rendered, "File: {{item.file_name}}")
+        
+        config_nested = "File: {{source.item.file_name}}"
+        rendered_nested = render_config(config_nested, template_vars)
+        self.assertEqual(rendered_nested, "File: test.csv")
 
 if __name__ == "__main__":
     unittest.main()

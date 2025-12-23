@@ -1,3 +1,4 @@
+from typing import Dict, Any
 from dagster_dag_factory.factory.base_operator import BaseOperator
 from dagster_dag_factory.factory.registry import OperatorRegistry
 from dagster_dag_factory.resources.snowflake import SnowflakeResource
@@ -17,7 +18,7 @@ class S3SnowflakeOperator(BaseOperator):
     source_config_schema = S3Config
     target_config_schema = SnowflakeConfig
     
-    def execute(self, context, source_config: S3Config, target_config: SnowflakeConfig):
+    def execute(self, context, source_config: S3Config, target_config: SnowflakeConfig, template_vars: Dict[str, Any]):
         # Resources
         s3_resource: S3Resource = getattr(context.resources, source_config.connection)
         snow_resource: SnowflakeResource = getattr(context.resources, target_config.connection)
@@ -66,6 +67,7 @@ class S3SnowflakeOperator(BaseOperator):
             
         copy_sql += f" ON_ERROR = '{target_config.on_error}';"
         
+        start_time = time.time()
         try:
             context.log.info(f"Executing COPY INTO {table} FROM @{stage}/{s3_path}")
             results = snow_resource.execute_query(copy_sql)
@@ -77,12 +79,22 @@ class S3SnowflakeOperator(BaseOperator):
                     keys = {k.lower(): v for k, v in row.items()}
                     rows_loaded += int(keys.get('rows_loaded', 0))
             
-            context.log.info(f"Loaded {rows_loaded} rows into {table}")
+            duration = time.time() - start_time
+            rows_per_sec = round(rows_loaded / duration, 2) if duration > 0 else 0
+            
+            summary = {
+                "rows_loaded": rows_loaded,
+                "duration_seconds": round(duration, 2),
+                "rows_per_second": rows_per_sec,
+                "table": table
+            }
+            
+            context.log.info(f"Loaded {rows_loaded} rows into {table} in {round(duration, 2)}s ({rows_per_sec} rows/s).")
             
             return {
+                "summary": summary,
                 "source": f"@{stage}/{s3_path}",
-                "target": table,
-                "rows_loaded": rows_loaded
+                "target": table
             }
             
         except Exception as e:

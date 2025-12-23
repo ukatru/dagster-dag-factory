@@ -1,3 +1,4 @@
+from typing import Dict, Any
 from dagster_dag_factory.factory.base_operator import BaseOperator
 from dagster_dag_factory.factory.registry import OperatorRegistry
 from dagster_dag_factory.resources.sftp import SFTPResource
@@ -9,13 +10,14 @@ import os
 
 from dagster_dag_factory.configs.sftp import SFTPConfig
 from dagster_dag_factory.configs.s3 import S3Config, S3Mode
+from dagster_dag_factory.factory.helpers.dynamic import Dynamic
 
 @OperatorRegistry.register(source="SFTP", target="S3")
 class SftpS3Operator(BaseOperator):
     source_config_schema = SFTPConfig
     target_config_schema = S3Config
     
-    def execute(self, context, source_config: SFTPConfig, target_config: S3Config):
+    def execute(self, context, source_config: SFTPConfig, target_config: S3Config, template_vars: Dict[str, Any]):
         import time
         sftp_resource: SFTPResource = getattr(context.resources, source_config.connection)
         s3_resource: S3Resource = getattr(context.resources, target_config.connection)
@@ -68,40 +70,58 @@ class SftpS3Operator(BaseOperator):
                 return False
 
         # 2. Key Rendering Helper
-        def render_s3_key(info: FileInfo) -> str:
-            render_ctx = {
-                "file_name": info.file_name,
-                "name": info.name,
-                "ext": info.ext,
-                "date": context.run_id,
-            }
+        from dagster_dag_factory.factory.helpers.rendering import render_config_model
+        
+        def render_runtime_config(info: FileInfo) -> S3Config:
+            # Prepare runtime context
+            runtime_vars = template_vars.copy()
             
-            if s3_key_template and ("{{" in s3_key_template):
-                key = s3_key_template
-                for k, v in render_ctx.items():
-                    key = key.replace(f"{{{{ {k} }}}}", str(v))
-                    key = key.replace(f"{{{{{k}}}}}", str(v))
-                return key
-            elif s3_prefix:
-                return f"{s3_prefix.rstrip('/')}/{info.file_name}"
-            else:
-                return target_config.key or info.file_name
+            # Legacy/Top-level 'item' removed for Niagara-style stricter routing
+            # runtime_vars["item"] = info # REMOVED
+            
+            # Enable {{ source.item }} access for clearer enterprise referencing
+            source_cfg = runtime_vars.get("source")
+            if source_cfg is not None:
+                if hasattr(source_cfg, "model_copy"):
+                    # Pydantic model support
+                    runtime_source = source_cfg.model_copy()
+                    runtime_source.item = info # Pydantic extra="allow" enables this
+                    runtime_vars["source"] = runtime_source
+                elif isinstance(source_cfg, (dict, Dynamic)):
+                    # Handle raw dict or already Dynamic objects
+                    data = source_cfg.__dict__ if hasattr(source_cfg, "__dict__") else source_cfg
+                    new_data = data.copy()
+                    new_data["item"] = info
+                    runtime_vars["source"] = Dynamic(new_data)
+            
+            # Re-render the target config with the runtime context
+            return render_config_model(target_config, runtime_vars)
 
         transferred_files = []
 
         # 3. Define Callback for Transfer
         def transfer_callback(f_info: FileInfo, index: int) -> bool:
             try:
-                base_target_key = render_s3_key(f_info)
-                context.log.info(f"Processing {f_info.full_file_path} -> {base_target_key}")
+                # DYNAMICALLY RENDERED CONFIG for this specific file
+                runtime_target_config = render_runtime_config(f_info)
+                
+                # If key is not provided and no suffix/prefix logic applied, fallback
+                target_key = runtime_target_config.key
+                if not target_key:
+                    if s3_prefix:
+                        target_key = f"{s3_prefix.rstrip('/')}/{f_info.file_name}"
+                    else:
+                        target_key = f_info.file_name
+
+                context.log.info(f"Processing {f_info.full_file_path} -> {target_key}")
 
                 # Use Push Model (Smart Buffer + getfo)
                 smart_buffer = s3_resource.create_smart_buffer(
-                    bucket_name=target_config.bucket_name,
-                    key=base_target_key,
-                    multi_file=(target_config.mode == S3Mode.MULTI_FILE),
-                    min_size=target_config.min_size,
-                    compress_options=target_config.compress_options,
+                    bucket_name=runtime_target_config.bucket_name,
+                    key=target_key,
+                    multi_file=(runtime_target_config.mode == S3Mode.MULTI_FILE),
+                    min_size=runtime_target_config.min_size,
+                    compress_options=runtime_target_config.compress_options,
                     logger=context.log
                 )
                 
@@ -121,11 +141,10 @@ class SftpS3Operator(BaseOperator):
                 context.log.error(f"Failed to transfer {f_info.file_name}: {e}")
                 raise e
 
+        # 4. Execute Scan & Transfer
+        start_time = time.time()
         with sftp_resource.get_client() as sftp:
             context.log.info(f"Scanning {sftp_path} (Pattern: {pattern}, Recurse: {recursive})")
-            
-            # Pass 'sftp' client implicitly to callback via closure? 
-            # Yes, 'sftp' variable from context manager is available in 'transfer_callback' scope.
             
             sftp_resource.list_files(
                 conn=sftp,
@@ -137,9 +156,13 @@ class SftpS3Operator(BaseOperator):
                 on_each=transfer_callback
             )
             
-            context.log.info(f"Transfer complete. {len(transferred_files)} files processed.")
+            duration = time.time() - start_time
+            from dagster_dag_factory.factory.helpers.stats import generate_transfer_stats
+            summary = generate_transfer_stats(transferred_files, duration)
+            
+            context.log.info(f"Transfer complete. {summary['total_files']} files ({summary['total_size_human']}) processed in {summary['duration_seconds']}s.")
 
         return {
-            "transferred_count": len(transferred_files),
+            "summary": summary,
             "files": transferred_files
         }
