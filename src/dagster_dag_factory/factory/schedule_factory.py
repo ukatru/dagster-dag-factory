@@ -9,7 +9,10 @@ class ScheduleFactory:
         schedules = []
         for sched_conf in schedules_config:
             name = sched_conf["name"]
-            job_name = sched_conf["job"]
+            job_name = sched_conf.get("job") or sched_conf.get("job_name")
+            if not job_name:
+                print(f"Warning: No job specified for schedule '{name}'")
+                continue
             cron_schedule = sched_conf["cron"]
             
             if job_name not in jobs_map:

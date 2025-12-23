@@ -13,11 +13,18 @@ class BaseOperator(ABC):
     target_config_schema: Optional[Type[BaseConfigModel]] = None
     
     @abstractmethod
-    def execute(self, context, source_config: Dict[str, Any], target_config: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, context, source_config: Any, target_config: Any) -> Any:
         """
-        Execute the operator logic.
+        Execute the operator logic for a single asset.
         """
         pass
+
+    def execute_multi_asset(self, context, source_config: Any, target_configs: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute the operator logic for multiple assets.
+        Default implementation raises NotImplementedError.
+        """
+        raise NotImplementedError(f"Operator {self.__class__.__name__} does not support multi-asset execution.")
 
     def log_configs(self, context, source_config: Any, target_config: Any):
         """Logs the rendered configurations for troubleshooting."""

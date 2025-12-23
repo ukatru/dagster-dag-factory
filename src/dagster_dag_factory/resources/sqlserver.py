@@ -1,9 +1,10 @@
-from typing import Optional, Iterator, List, ClassVar
+from typing import Optional, Iterator, List, ClassVar, Any
 from contextlib import contextmanager
 import pyodbc
 from dagster import get_dagster_logger
 from pydantic import Field
 from dagster_dag_factory.resources.base import BaseConfigurableResource
+from dagster_dag_factory.configs.sqlserver import SQLServerConfig
 
 class SQLServerResource(BaseConfigurableResource):
     """
@@ -83,3 +84,12 @@ class SQLServerResource(BaseConfigurableResource):
                 columns = [column[0] for column in cursor.description]
                 return [dict(zip(columns, row)) for row in cursor.fetchall()]
             return []
+    def fetch_data(self, config: Any) -> list:
+        """
+        Duck-typed fetch method for multi-asset orchestration.
+        Works with any config object that has a 'query' or 'sql' attribute.
+        """
+        query = getattr(config, "sql", getattr(config, "query", None))
+        if not query:
+             raise ValueError("Configuration must provide 'sql' or 'query' for fetching data from SQL Server.")
+        return self.execute_query(sql=query)

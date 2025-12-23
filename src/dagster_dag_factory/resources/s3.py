@@ -8,6 +8,7 @@ from pydantic import Field
 import io
 from dagster_dag_factory.resources.base import BaseConfigurableResource
 from dagster_dag_factory.configs.compression import CompressConfig
+from dagster_dag_factory.configs.s3 import S3Config
 
 class ProgressPercentage(object):
     def __init__(self, filename: str, size: float, logger=None):
@@ -278,7 +279,7 @@ class S3Resource(BaseConfigurableResource):
             config=config
         )
 
-    def write_csv(self, key: str, data: list, headers: list = None) -> None:
+    def write_csv(self, key: str, data: list, headers: list = None, **kwargs) -> None:
         if not data:
             return
         import pandas as pd
@@ -293,7 +294,7 @@ class S3Resource(BaseConfigurableResource):
             Body=csv_buffer.getvalue()
         )
 
-    def write_parquet(self, key: str, data: list) -> None:
+    def write_parquet(self, key: str, data: list, **kwargs) -> None:
         if not data:
             return
         import pandas as pd
@@ -333,3 +334,18 @@ class S3Resource(BaseConfigurableResource):
             logger=logger,
             max_workers=max_workers
         )
+    def write_data(self, data: list, config: Any) -> None:
+        """
+        Duck-typed write method for multi-asset orchestration.
+        Works with any config object that has a 'key' or 'path' attribute.
+        """
+        s3_key = getattr(config, "key", getattr(config, "path", None))
+        if not s3_key:
+            raise ValueError("S3 Key/Path not specified in config")
+            
+        fmt = getattr(config, "format", "csv").lower()
+        
+        if fmt == "parquet":
+            self.write_parquet(key=s3_key, data=data)
+        else:
+            self.write_csv(key=s3_key, data=data)

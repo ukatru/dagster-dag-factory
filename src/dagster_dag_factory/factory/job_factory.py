@@ -6,7 +6,7 @@ class JobFactory:
         jobs = []
         for job_conf in jobs_config:
             name = job_conf["name"]
-            selection = job_conf.get("selection", "*")
+            selection = job_conf.get("asset_selection") or job_conf.get("selection", "*")
             
             # Simple selection logic
             if isinstance(selection, list):

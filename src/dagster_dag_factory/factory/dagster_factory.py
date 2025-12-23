@@ -34,13 +34,16 @@ class DagsterFactory:
                 config = yaml.safe_load(f) or {}
                 
             if "assets" in config:
-                # Use AssetFactory to create assets from this list
                 for asset_conf in config["assets"]:
-                     asset_defs = self.asset_factory._create_asset(asset_conf)
-                     if isinstance(asset_defs, list):
-                         assets.extend(asset_defs)
-                     else:
-                         assets.append(asset_defs)
+                     assets.extend(self.asset_factory._create_asset(asset_conf))
+
+            if "multi_assets" in config:
+                for ma_conf in config["multi_assets"]:
+                    assets.extend(self.asset_factory._create_multi_asset(ma_conf))
+
+            if "source_assets" in config:
+                for sa_conf in config["source_assets"]:
+                    assets.append(self.asset_factory._create_source_asset(sa_conf))
             
             if "jobs" in config:
                 jobs_config.extend(config["jobs"])

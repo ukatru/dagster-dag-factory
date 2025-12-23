@@ -16,7 +16,9 @@ from dagster import (
     SourceAsset,
     AssetKey,
     RetryPolicy,
-    Backoff
+    Backoff,
+    multi_asset,
+    AssetOut
 )
 import yaml
 from pathlib import Path
@@ -48,6 +50,10 @@ class AssetFactory:
             if "source_assets" in config:
                 for sa_conf in config["source_assets"]:
                     all_defs.append(self._create_source_asset(sa_conf))
+
+            if "multi_assets" in config:
+                for ma_conf in config["multi_assets"]:
+                    all_defs.extend(self._create_multi_asset(ma_conf))
         return all_defs
 
     def _get_backfill_policy(self, config: Optional[Dict[str, Any]]) -> Optional[BackfillPolicy]:
@@ -331,3 +337,153 @@ class AssetFactory:
         checks = self._create_checks(AssetKey(name), config.get("checks", []), required_resources)
         
         return [_generated_asset, *checks]
+
+    def _create_multi_asset(self, config: Dict[str, Any]):
+        name = config["name"]
+        group = config.get("group", "default")
+        
+        source = config.get("source", {})
+        target_default = config.get("target", {})
+        outs_config = config.get("outs", {})
+        deps = config.get("deps", [])
+        
+        # Metadata and Tags
+        metadata = config.get("metadata")
+        tags = config.get("tags") or {}
+        
+        # Concurrency support
+        pool = config.get("concurrency_key")
+
+        # Partition Support
+        partitions_def = PartitionFactory.get_partitions_def(config.get("partitions_def"))
+        
+        # Policies
+        backfill_policy = self._get_backfill_policy(config.get("backfill_policy"))
+        retry_policy = self._get_retry_policy(config.get("retry_policy"))
+
+        # Input dependencies
+        ins = {}
+        ins_config = config.get("ins", {})
+        for dep_name, dep_conf in ins_config.items():
+            partition_mapping = self._get_partition_mapping(dep_conf.get("partition_mapping"))
+            ins[dep_name] = AssetIn(partition_mapping=partition_mapping)
+
+        deps = [d for d in deps if d not in ins]
+
+        # Determine required resources
+        required_resources = set()
+        if "connection" in source:
+            required_resources.add(source["connection"])
+        if "connection" in target_default:
+            required_resources.add(target_default["connection"])
+            
+        # Build AssetOuts
+        outs = {}
+        for out_key, out_conf in outs_config.items():
+            # Combine tags and metadata
+            out_tags = out_conf.get("tags", {})
+            out_metadata = out_conf.get("metadata", {})
+            
+            outs[out_key] = AssetOut(
+                key=out_key,
+                description=out_conf.get("description"),
+                metadata={**out_tags, **out_metadata},
+                is_required=out_conf.get("is_required", True)
+            )
+            if "connection" in out_conf:
+                required_resources.add(out_conf["connection"])
+
+        def logic(context, source_conf, target_def, outs_conf):
+            template_vars = self._get_template_vars(context)
+            
+            # Lookup operator for metadata (schemas)
+            source_type = source_conf.get("type")
+            target_type = target_def.get("type")
+            operator_class = OperatorRegistry.get_operator(source_type, target_type)
+            operator = operator_class() if operator_class else None
+
+            # 1. Read Data (Resource-Delegated via operator schemas)
+            source_conn_name = source_conf.get("connection")
+            source_resource = getattr(context.resources, source_conn_name) if source_conn_name else None
+            
+            rendered_source = self._render_config(source_conf, template_vars)
+            
+            if operator and operator.source_config_schema:
+                validated_source = operator.source_config_schema(**rendered_source)
+            else:
+                validated_source = rendered_source
+
+            data = []
+            if source_resource:
+                if hasattr(source_resource, "fetch_data"):
+                    context.log.info(f"Fetching data via {source_conn_name}.fetch_data()")
+                    data = source_resource.fetch_data(validated_source, **rendered_source)
+                elif hasattr(source_resource, "execute_query"):
+                    # Fallback for resources not yet refactored
+                    context.log.warning(f"Resource {source_conn_name} missing 'fetch_data', falling back to execute_query")
+                    # We pass the rendered config as kwargs for backward compatibility
+                    temp_kwargs = rendered_source.copy()
+                    for k in ['connection', 'type', 'split_by']:
+                        temp_kwargs.pop(k, None)
+                    data = source_resource.execute_query(**temp_kwargs)
+                else:
+                    raise NotImplementedError(f"Resource {source_conn_name} does not support standard fetch methods.")
+
+            # 2. Split Data
+            split_by = source_conf.get("split_by")
+            results = {}
+            
+            for out_name, out_item_conf in outs_conf.items():
+                out_tags = out_item_conf.get("tags", {})
+                filter_val = out_tags.get("filter_value") or out_tags.get("region")
+                
+                if split_by and filter_val:
+                    filtered_data = [row for row in data if str(row.get(split_by)) == str(filter_val)]
+                else:
+                    filtered_data = data
+                
+                # 3. Load Data (Resource-Delegated)
+                write_conf = {**target_def, **out_item_conf}
+                target_conn_name = write_conf.get("connection")
+                target_resource = getattr(context.resources, target_conn_name) if target_conn_name else None
+                
+                rendered_target = self._render_config(write_conf, template_vars)
+                if operator and operator.target_config_schema:
+                    validated_target = operator.target_config_schema(**rendered_target)
+                else:
+                    validated_target = rendered_target
+                
+                target_path = "unknown"
+                if target_resource:
+                    if hasattr(target_resource, "write_data"):
+                        context.log.info(f"Writing {len(filtered_data)} rows to {target_conn_name} via write_data()")
+                        target_resource.write_data(data=filtered_data, config=validated_target, **rendered_target)
+                        target_path = getattr(validated_target, "key", "unknown")
+                    else:
+                        # Fallback
+                        context.log.warning(f"Resource {target_conn_name} missing 'write_data', falling back to dynamic dispatch")
+                        fmt = (write_conf.get("format") or "csv").lower()
+                        method_name = f"write_{fmt}"
+                        if hasattr(target_resource, method_name):
+                            getattr(target_resource, method_name)(data=filtered_data, **rendered_target)
+                        target_path = rendered_target.get("path") or rendered_target.get("key") or "unknown"
+                
+                results[out_name] = {"rows": len(filtered_data), "path": target_path}
+            
+            return results
+
+        @multi_asset(
+            outs=outs,
+            group_name=group,
+            required_resource_keys=required_resources,
+            deps=deps,
+            ins=ins,
+            partitions_def=partitions_def,
+            backfill_policy=backfill_policy,
+            retry_policy=retry_policy,
+            pool=pool
+        )
+        def _generated_multi_asset(context: AssetExecutionContext, **kwargs):
+            return logic(context, source, target_default, outs_config)
+            
+        return [_generated_multi_asset]
