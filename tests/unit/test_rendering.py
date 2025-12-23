@@ -80,36 +80,41 @@ class TestVariableRendering(unittest.TestCase):
         rendered = render_config(config, template_vars)
         self.assertEqual(rendered, "Bucket: my-raw-bucket")
 
-    def test_cross_config_rendering_explicit(self):
-        # Test the explicit {{ source.item }} pattern
+    def test_nested_model_item_rendering(self):
         from dagster_dag_factory.configs.s3 import S3Config
+        from dagster_dag_factory.factory.helpers.rendering import render_config
         from dagster_dag_factory.models.file_info import FileInfo
+        
+        info = FileInfo(
+            file_name="customer_data.csv",
+            full_file_path="/src/raw/customer_data.csv",
+            root_path="/src",
+            file_size=5000,
+            modified_ts=1671234567.0
+        )
+        
+        # Verify Niagara properties
+        self.assertEqual(info.file_path, "raw/customer_data.csv")
+        self.assertEqual(info.path, "raw")
+        self.assertEqual(info.name, "customer_data")
+        self.assertEqual(info.ext, ".csv")
         
         source_model = S3Config(
             connection="s3_src",
             bucket_name="src-bucket",
             key="raw/"
         )
-        
-        info = FileInfo(
-            file_name="customer_data.csv",
-            file_path="raw/customer_data.csv",
-            full_file_path="/src/raw/customer_data.csv",
-            file_size=5000,
-            modified_ts=1671234567.0
-        )
-        
-        # Attach item to model dynamically (simulating operator loop)
         source_model.item = info
-        
-        target_conf = {
-            "key": "archive/{{source.bucket_name}}/{{source.item.file_name}}"
-        }
         
         template_vars = {"source": source_model}
         
+        # Test interpolation with new properties
+        target_conf = {
+            "key": "archive/{{source.item.path}}/{{source.item.name}}_backup{{source.item.ext}}"
+        }
+        
         rendered = render_config(target_conf, template_vars)
-        self.assertEqual(rendered["key"], "archive/src-bucket/customer_data.csv")
+        self.assertEqual(rendered["key"], "archive/raw/customer_data_backup.csv")
 
     def test_strict_routing_no_backward_compat(self):
         # test that top-level 'item' is NOT available if not explicitly provided
@@ -117,8 +122,8 @@ class TestVariableRendering(unittest.TestCase):
         
         info = FileInfo(
             file_name="test.csv",
-            file_path="test.csv",
             full_file_path="/test.csv",
+            root_path="/",
             file_size=1,
             modified_ts=1.0
         )

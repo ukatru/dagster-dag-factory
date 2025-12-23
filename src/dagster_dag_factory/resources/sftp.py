@@ -118,8 +118,8 @@ class SFTPResource(BaseConfigurableResource):
                 
                 info = FileInfo(
                     file_name=file_name,
-                    file_path=os.path.relpath(full_file_path, path) if recursive else file_name,
                     full_file_path=full_file_path,
+                    root_path=path,
                     file_size=item.st_size,
                     modified_ts=item.st_mtime
                 )

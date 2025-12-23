@@ -113,7 +113,10 @@ class SftpS3Operator(BaseOperator):
                     else:
                         target_key = f_info.file_name
 
-                context.log.info(f"Processing {f_info.full_file_path} -> {target_key}")
+                context.log.info(f"Transferring {f_info.full_file_path} -> s3://{runtime_target_config.bucket_name}/{target_key}")
+                
+                if "FileInfo(" in target_key:
+                    context.log.warning(f"Detected object repr in target key! Check your template for {{ source.item }}. Should probably be {{ source.item.file_name }}.")
 
                 # Use Push Model (Smart Buffer + getfo)
                 smart_buffer = s3_resource.create_smart_buffer(
