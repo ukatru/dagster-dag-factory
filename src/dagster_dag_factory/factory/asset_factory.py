@@ -108,20 +108,12 @@ class AssetFactory:
         return template_vars
 
 
-    def _create_checks(self, asset_key: AssetKey, config_list: List[Dict[str, Any]], required_resources: set):
-        from dagster_dag_factory.factory.check_registry import CheckRegistry
+    def _create_checks(self, asset_key: AssetKey, config_list: List[Dict[str, Any]], required_resources: set, operator):
         
         checks = []
 
         def make_check(check_conf):
             check_name = check_conf["name"]
-            check_type = check_conf["type"]
-            
-            check_cls = CheckRegistry.get_check(check_type)
-            if not check_cls:
-                return None
-                
-            check_obj = check_cls()
             
             # Extract resources needed by this check
             check_resources = set()
@@ -132,7 +124,9 @@ class AssetFactory:
             def _generated_check(context: AssetCheckExecutionContext):
                 template_vars = self._get_template_vars(context)
                 rendered_conf = render_config(check_conf, template_vars)
-                return check_obj.execute(context, rendered_conf)
+                # Pass asset_key to the check object
+                rendered_conf["_asset_key"] = asset_key
+                return operator.execute_check(context, rendered_conf)
             
             return _generated_check
 
@@ -198,8 +192,22 @@ class AssetFactory:
         operator_class = OperatorRegistry.get_operator(source_type, target_type)
         
         if not operator_class:
-            def logic(*args, **kwargs): 
+            @asset(
+                name=name, 
+                group_name=group, 
+                required_resource_keys=required_resources,
+                deps=deps,
+                ins=ins,
+                partitions_def=partitions_def,
+                metadata=metadata,
+                tags=tags,
+                retry_policy=retry_policy,
+                pool=pool
+            )
+            def _generated_asset(context: AssetExecutionContext, **kwargs):
                 raise NotImplementedError(f"No operator registered for {source_type}->{target_type}")
+            
+            return [_generated_asset]
         else:
             # Instantiate operator
             operator = operator_class()
@@ -238,28 +246,33 @@ class AssetFactory:
                 # Log configurations for troubleshooting
                 operator.log_configs(context, source_model, target_model)
 
-                operator.execute(context, source_model, target_model, template_vars)
+                results = operator.execute(context, source_model, target_model, template_vars)
+                
+                # Automatically harvest observations as Dagster Metadata
+                if results and isinstance(results, dict) and "observations" in results:
+                    context.add_output_metadata(results["observations"])
+                
                 return None
 
-        @asset(
-            name=name, 
-            group_name=group, 
-            required_resource_keys=required_resources,
-            deps=deps,
-            ins=ins,
-            partitions_def=partitions_def,
-            backfill_policy=backfill_policy,
-            auto_materialize_policy=automation_policy,
-            freshness_policy=freshness_policy,
-            metadata=metadata,
-            tags=tags,
-            retry_policy=retry_policy,
-            pool=pool
-        )
-        def _generated_asset(context: AssetExecutionContext, **kwargs):
-            return logic(context, source, target)
+            @asset(
+                name=name, 
+                group_name=group, 
+                required_resource_keys=required_resources,
+                deps=deps,
+                ins=ins,
+                partitions_def=partitions_def,
+                backfill_policy=backfill_policy,
+                auto_materialize_policy=automation_policy,
+                freshness_policy=freshness_policy,
+                metadata=metadata,
+                tags=tags,
+                retry_policy=retry_policy,
+                pool=pool
+            )
+            def _generated_asset(context: AssetExecutionContext, **kwargs):
+                return logic(context, source, target)
+                
+            # Create checks using the operator instance
+            checks = self._create_checks(AssetKey(name), config.get("checks", []), required_resources, operator)
             
-        # Create checks
-        checks = self._create_checks(AssetKey(name), config.get("checks", []), required_resources)
-        
-        return [_generated_asset, *checks]
+            return [_generated_asset, *checks]

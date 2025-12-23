@@ -1,5 +1,6 @@
 from typing import Dict, Any
-from dagster_dag_factory.factory.base_operator import BaseOperator
+from dagster import AssetCheckExecutionContext, AssetCheckResult
+from dagster_dag_factory.operators.base_operator import BaseOperator
 from dagster_dag_factory.factory.registry import OperatorRegistry
 from dagster_dag_factory.resources.sqlserver import SQLServerResource
 from dagster_dag_factory.resources.s3 import S3Resource
@@ -49,6 +50,46 @@ class SqlServerS3Operator(BaseOperator):
         
         return {
             "summary": summary,
+            "observations": {
+                "rows_extracted": rows,
+                "rows_written": rows
+            },
             "source": "SQLSERVER",
             "target": "S3"
         }
+
+    def execute_check(self, context: AssetCheckExecutionContext, config: dict) -> AssetCheckResult:
+        check_type = config.get("type")
+        
+        if check_type == "sql_server_check":
+            query = config["query"]
+            connection_name = config["connection"]
+            threshold = config.get("threshold", 1)
+            
+            # Get resource (we can reuse the same established pattern)
+            resource = getattr(context.resources, connection_name)
+            
+            # Execute
+            results = resource.execute_query(query)
+            
+            passed = False
+            val = None
+            if results and len(results) > 0:
+                first_row = results[0]
+                val = list(first_row.values())[0] if isinstance(first_row, dict) else first_row[0]
+                passed = float(val) >= threshold
+                message = f"Check value: {val}, Threshold: {threshold}"
+            else:
+                message = "No results returned from check query."
+                
+            return AssetCheckResult(
+                passed=passed, 
+                metadata={
+                    "value": val if val is not None else None, 
+                    "message": message,
+                    "query": query
+                }
+            )
+            
+        # Fallback to BaseOperator for observation_diff etc.
+        return super().execute_check(context, config)

@@ -1,5 +1,5 @@
 from typing import Dict, Any
-from dagster_dag_factory.factory.base_operator import BaseOperator
+from dagster_dag_factory.operators.base_operator import BaseOperator
 from dagster_dag_factory.factory.registry import OperatorRegistry
 from dagster_dag_factory.resources.snowflake import SnowflakeResource
 from dagster_dag_factory.resources.s3 import S3Resource
@@ -93,6 +93,9 @@ class S3SnowflakeOperator(BaseOperator):
             
             return {
                 "summary": summary,
+                "observations": {
+                    "rows_loaded": rows_loaded
+                },
                 "source": f"@{stage}/{s3_path}",
                 "target": table
             }

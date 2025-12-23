@@ -1,5 +1,5 @@
 from typing import Dict, Any
-from dagster_dag_factory.factory.base_operator import BaseOperator
+from dagster_dag_factory.operators.base_operator import BaseOperator
 from dagster_dag_factory.factory.registry import OperatorRegistry
 from dagster_dag_factory.resources.sftp import SFTPResource
 from dagster_dag_factory.resources.s3 import S3Resource
@@ -167,5 +167,10 @@ class SftpS3Operator(BaseOperator):
 
         return {
             "summary": summary,
+            "observations": {
+                "files_scanned": summary["total_files"],
+                "files_uploaded": summary["total_files"],
+                "bytes_transferred": summary["total_bytes"]
+            },
             "files": transferred_files
         }
