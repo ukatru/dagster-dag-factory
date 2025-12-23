@@ -12,3 +12,5 @@ class S3Config(BaseConfigModel):
     skip_header: Optional[int] = Field(default=1, description="Number of header rows to skip")
     compression: Optional[str] = Field(default=None, description="Compression type (gzip, snappy, etc.)")
     compress_options: Optional[CompressConfig] = Field(default=None, description="Detailed compression settings (ZIP/GUNZIP)")
+    multi_file: bool = Field(default=False, description="Enable splitting large files into multiple parts")
+    chunk_size_mb: int = Field(default=100, description="Chunk size in MB for multi-file splitting")

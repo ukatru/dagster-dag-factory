@@ -92,47 +92,24 @@ class SftpToS3Operator(BaseOperator):
         # 3. Define Callback for Transfer
         def transfer_callback(f_info: FileInfo, index: int) -> bool:
             try:
-                target_key = render_s3_key(f_info)
-                context.log.info(f"Transferring {f_info.full_file_path} -> s3://{s3_resource.bucket_name}/{target_key}")
-                
-                # We need the sftp CLIENT here to download. 
-                # The resource list_files method opens the client but doesn't pass it to callback directly.
-                # However, list_files is running inside 'with sftp_resource.get_client() as sftp' scope? 
-                # NO. list_files takes 'conn'. We need to call list_files inside a client session block we create here.
-                
-                # BUT wait, the callback is called while iterating listdir_attr. 
-                # Using the SAME connection object 'sftp' (defined in outer scope) is safe? 
-                # Paramiko is not thread safe, but we are single threaded here.
-                # It should be okay to use 'sftp.getfo' inside the loop iterating 'sftp.listdir_attr'.
-                
-                mem_file = io.BytesIO()
-                sftp.getfo(f_info.full_file_path, mem_file)
-                mem_file.seek(0)
-                
-                # Compression
-                if compress_cfg and compress_cfg.action == "COMPRESS":
-                    if compress_cfg.type == "GUNZIP":
-                        import gzip
-                        context.log.info(f"Compressing {f_info.file_name} with GZIP...")
-                        gzip_buffer = io.BytesIO()
-                        with gzip.GzipFile(fileobj=gzip_buffer, mode='wb') as gz:
-                            gz.write(mem_file.getvalue())
-                        gzip_buffer.seek(0)
-                        mem_file = gzip_buffer
-                        if not target_key.endswith(".gz"):
-                            target_key += ".gz"
-                
-                s3_resource.get_client().put_object(
-                    Bucket=s3_resource.bucket_name,
-                    Key=target_key,
-                    Body=mem_file.getvalue()
-                )
-                
-                transferred_files.append({
-                    "source": f_info.full_file_path,
-                    "target": target_key,
-                    "size": f_info.file_size
-                })
+                base_target_key = render_s3_key(f_info)
+                context.log.info(f"Processing {f_info.full_file_path} -> s3://{s3_resource.bucket_name}/{base_target_key}")
+
+                with sftp.open(f_info.full_file_path, 'rb') as remote_file:
+                    results = s3_resource.upload_stream_chunks(
+                        stream=remote_file,
+                        key=base_target_key,
+                        multi_file=target_config.multi_file,
+                        chunk_size_mb=target_config.chunk_size_mb,
+                        compress_options=target_config.compress_options,
+                        logger=context.log
+                    )
+                    
+                    # Enrich results with source info
+                    for res in results:
+                        res['source'] = f_info.full_file_path
+                        transferred_files.append(res)
+
                 return True
             except Exception as e:
                 context.log.error(f"Failed to transfer {f_info.file_name}: {e}")
