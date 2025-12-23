@@ -6,7 +6,7 @@ from ..configs.sqlserver import SQLServerConfig
 from ..configs.s3 import S3Config
 
 @OperatorRegistry.register(source="SQLSERVER", target="S3")
-class SqlServerToS3Operator(BaseOperator):
+class SqlServerS3Operator(BaseOperator):
     source_config_schema = SQLServerConfig
     target_config_schema = S3Config
     

@@ -21,17 +21,160 @@ class ProgressPercentage(object):
         # To simplify we just lock and update
         with self._lock:
             self._seen_so_far += bytes_amount
-            # If we wanted to log percentage:
-            # if self._size > 0:
-            #     percentage = (self._seen_so_far / self._size) * 100
-            #     if self._logger:
-            #         self._logger.debug(f"{self._filename}  {self._seen_so_far} / {self._size}  ({percentage:.2f}%)")
-            #     else:
-            #         sys.stdout.write(
-            #             "\r%s  %s / %s  (%.2f%%)" % (
-            #                 self._filename, self._seen_so_far, self._size,
-            #                 percentage))
-            #         sys.stdout.flush()
+            # If we wanted to log percentage details, we could here
+
+class SafeSplitBuffer:
+    """
+    A smart buffer that accepts writes (from sftp.getfo), performs safe newline splitting,
+    and uploads chunks to S3 in parallel background threads.
+    """
+    def __init__(
+        self,
+        s3_resource: 'S3Resource',
+        key: str,
+        multi_file: bool = False,
+        chunk_size_mb: int = 100,
+        compress_options: Optional[CompressConfig] = None,
+        logger: Any = None,
+        max_workers: int = 5
+    ):
+        self.s3_resource = s3_resource
+        self.key = key
+        self.multi_file = multi_file
+        self.chunk_size = chunk_size_mb * 1024 * 1024
+        self.compress_options = compress_options
+        self.logger = logger
+        
+        # State
+        self.buffer = b""
+        self.header = b""
+        self.part_num = 1
+        self.transferred_files = []
+        
+        # Threading
+        import concurrent.futures
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+        self.futures = []
+        self.lock = threading.Lock() # Protect transferred_files
+        
+        self.s3_client = s3_resource.get_client()
+
+    def write(self, data: bytes):
+        if not data:
+            return
+            
+        self.buffer += data
+        
+        if self.multi_file:
+            # Check if buffer is big enough to split
+            while len(self.buffer) >= self.chunk_size:
+                # Strategy: Look at the first 'chunk_size' bytes. 
+                # Find last newline there.
+                
+                window = self.buffer[:self.chunk_size]
+                last_newline = window.rfind(b'\n')
+                
+                if last_newline == -1:
+                    # No newline in this chunk.
+                    # We might accumulate unless buffer is HUGE
+                    if len(self.buffer) > 2 * self.chunk_size:
+                        if self.logger:
+                             self.logger.warning(f"No newline found in {len(self.buffer)} bytes! Force splitting risks data.")
+                    return # Wait for more data
+                
+                # We found a split point!
+                chunk_data = self.buffer[:last_newline + 1]
+                self.buffer = self.buffer[last_newline + 1:] # Carry over the rest
+                
+                self._submit_chunk(chunk_data)
+
+    def _submit_chunk(self, data: bytes):
+        # Capture header if first part
+        if self.part_num == 1 and not self.header:
+            first_newline = data.find(b'\n')
+            if first_newline != -1:
+                self.header = data[:first_newline + 1]
+                if self.logger:
+                    self.logger.info(f"Detected header: {self.header.strip()}")
+
+        # Prepend header if needed
+        data_to_upload = data
+        if self.part_num > 1 and self.header:
+            data_to_upload = self.header + data
+            
+        # Determine Key
+        if self.multi_file:
+            name, ext = os.path.splitext(self.key)
+            part_key = f"{name}_part_{self.part_num}{ext}"
+        else:
+            part_key = self.key
+
+        # Submit to thread
+        future = self.executor.submit(
+            self._upload_worker, 
+            data_to_upload, 
+            part_key, 
+            self.part_num
+        )
+        self.futures.append(future)
+        self.part_num += 1
+
+    def _upload_worker(self, data: bytes, key: str, part_num: int):
+        try:
+            final_data = data
+            final_key = key
+            
+            # Compress
+            if self.compress_options and self.compress_options.action == "COMPRESS":
+                if self.compress_options.type == "GUNZIP":
+                    import gzip
+                    gzip_buffer = io.BytesIO()
+                    with gzip.GzipFile(fileobj=gzip_buffer, mode='wb') as gz:
+                        gz.write(data)
+                    gzip_buffer.seek(0)
+                    final_data = gzip_buffer.getvalue()
+                    if not final_key.endswith(".gz"):
+                        final_key += ".gz"
+            
+            # Upload
+            self.s3_client.put_object(
+                Bucket=self.s3_resource.bucket_name,
+                Key=final_key,
+                Body=final_data
+            )
+            
+            with self.lock:
+                self.transferred_files.append({
+                    "target": final_key,
+                    "size": len(final_data),
+                    "part": part_num
+                })
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to upload part {part_num}: {e}")
+            raise e
+
+    def close(self):
+        """
+        Finalize: upload remaining buffer and wait for all threads.
+        """
+        if self.buffer:
+            self._submit_chunk(self.buffer)
+            self.buffer = b""
+            
+        # Wait for threads
+        import concurrent.futures
+        for future in concurrent.futures.as_completed(self.futures):
+            future.result()
+        
+        self.executor.shutdown(wait=True)
+        return self.transferred_files
+
+    def flush(self):
+        pass
+    
+    def tell(self):
+        return 0
 
 class S3Resource(BaseConfigurableResource):
     """
@@ -168,134 +311,25 @@ class S3Resource(BaseConfigurableResource):
         response = self.get_client().get_object(Bucket=self.bucket_name, Key=key, Range='bytes=0-10240')
         return pd.read_csv(response["Body"], nrows=nrows, sep=delimiter)
 
-    def upload_stream_chunks(
-        self, 
-        stream: IO, 
-        key: str, 
-        multi_file: bool = False, 
+    def create_smart_buffer(
+        self,
+        key: str,
+        multi_file: bool = False,
         chunk_size_mb: int = 100,
         compress_options: Optional[CompressConfig] = None,
         logger: Any = None,
         max_workers: int = 5
-    ) -> List[dict]:
+    ):
         """
-        Reads from stream in chunks and uploads to S3 using threads.
-        Handles:
-        - Multi-file splitting with SAFE newline detection
-        - Header retention (prepends header to all splits)
-        - Compression
-        - Parallel Uploads
+        Creates a SafeSplitBuffer that behaves like a file object for writing.
+        Best used with sftp.getfo() for high-performance 'push' transfers.
         """
-        import concurrent.futures
-        
-        s3_client = self.get_client()
-        transferred_files = []
-        lock = threading.Lock() # Protect transferred_files append
-        
-        def upload_data(data: bytes, part_key: str, part_num: int):
-            try:
-                final_data = data
-                final_key = part_key
-                
-                # Compress
-                if compress_options and compress_options.action == "COMPRESS":
-                    if compress_options.type == "GUNZIP":
-                        import gzip
-                        gzip_buffer = io.BytesIO()
-                        with gzip.GzipFile(fileobj=gzip_buffer, mode='wb') as gz:
-                            gz.write(data)
-                        gzip_buffer.seek(0)
-                        final_data = gzip_buffer.getvalue()
-                        if not final_key.endswith(".gz"):
-                            final_key += ".gz"
-                
-                # Upload
-                s3_client.put_object(
-                    Bucket=self.bucket_name,
-                    Key=final_key,
-                    Body=final_data
-                )
-                
-                # Record result
-                with lock:
-                    transferred_files.append({
-                        "target": final_key,
-                        "size": len(final_data),
-                        "part": part_num
-                    })
-                return True
-            except Exception as e:
-                if logger:
-                     logger.error(f"Failed to upload part {part_num} ({part_key}): {e}")
-                raise e
-
-        if multi_file:
-            chunk_size = chunk_size_mb * 1024 * 1024
-            if logger:
-                logger.info(f"Splitting stream into {chunk_size_mb}MB chunks (safe split with header). Parallelism: {max_workers}")
-            
-            part_num = 1
-            leftover = b""
-            header = b""
-            
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = []
-                
-                while True:
-                    read_data = stream.read(chunk_size)
-                    
-                    if not read_data:
-                        # EOF
-                        if leftover:
-                            name, ext = os.path.splitext(key)
-                            part_key = f"{name}_part_{part_num}{ext}"
-                            
-                            final_payload = (header + leftover) if part_num > 1 else leftover
-                            
-                            # Submit final part
-                            futures.append(executor.submit(upload_data, final_payload, part_key, part_num))
-                        break
-                    
-                    current_block = leftover + read_data
-                    
-                    # Detect Header
-                    if part_num == 1 and not header:
-                        first_newline = current_block.find(b'\n')
-                        if first_newline != -1:
-                            header = current_block[:first_newline + 1]
-                            if logger:
-                                logger.info(f"Detected header: {header.strip()}")
-                    
-                    last_newline = current_block.rfind(b'\n')
-                    
-                    if last_newline == -1:
-                        if logger:
-                             logger.warning(f"No newline found in chunk {part_num}. Accumulating...")
-                        leftover = current_block
-                        continue
-                    
-                    data_to_upload = current_block[:last_newline + 1]
-                    leftover = current_block[last_newline + 1:]
-                    
-                    if part_num > 1 and header:
-                        data_to_upload = header + data_to_upload
-                    
-                    name, ext = os.path.splitext(key)
-                    part_key = f"{name}_part_{part_num}{ext}"
-                    
-                    # Submit task
-                    futures.append(executor.submit(upload_data, data_to_upload, part_key, part_num))
-                    part_num += 1
-                
-                # Wait for all uploads to complete
-                for future in concurrent.futures.as_completed(futures):
-                    future.result() # Raise exceptions if any
-        else:
-            # Single File - no threading needed for single part? 
-            # Or use multipart upload? For now keeping simple.
-            content = stream.read()
-            final_key = key
-            # Re-use upload_data logic but synchronous is fine for single file
-            upload_data(content, final_key, 1)
-
-        return transferred_files
+        return SafeSplitBuffer(
+            s3_resource=self,
+            key=key,
+            multi_file=multi_file,
+            chunk_size_mb=chunk_size_mb,
+            compress_options=compress_options,
+            logger=logger,
+            max_workers=max_workers
+        )

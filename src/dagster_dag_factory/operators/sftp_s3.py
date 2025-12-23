@@ -11,7 +11,7 @@ from ..configs.sftp import SFTPConfig
 from ..configs.s3 import S3Config
 
 @OperatorRegistry.register(source="SFTP", target="S3")
-class SftpToS3Operator(BaseOperator):
+class SftpS3Operator(BaseOperator):
     source_config_schema = SFTPConfig
     target_config_schema = S3Config
     
@@ -95,25 +95,30 @@ class SftpToS3Operator(BaseOperator):
                 base_target_key = render_s3_key(f_info)
                 context.log.info(f"Processing {f_info.full_file_path} -> s3://{s3_resource.bucket_name}/{base_target_key}")
 
-                with sftp.open(f_info.full_file_path, 'rb') as remote_file:
-                    results = s3_resource.upload_stream_chunks(
-                        stream=remote_file,
-                        key=base_target_key,
-                        multi_file=target_config.multi_file,
-                        chunk_size_mb=target_config.chunk_size_mb,
-                        compress_options=target_config.compress_options,
-                        logger=context.log
-                    )
-                    
-                    # Enrich results with source info
-                    for res in results:
-                        res['source'] = f_info.full_file_path
-                        transferred_files.append(res)
+                # Use Push Model (Smart Buffer + getfo)
+                smart_buffer = s3_resource.create_smart_buffer(
+                    key=base_target_key,
+                    multi_file=target_config.multi_file,
+                    chunk_size_mb=target_config.chunk_size_mb,
+                    compress_options=target_config.compress_options,
+                    logger=context.log
+                )
+                
+                try:
+                    sftp.getfo(f_info.full_file_path, smart_buffer)
+                finally:
+                    # closing triggers upload of remainder and waiting for threads
+                    results = smart_buffer.close()
+                
+                # Enrich results with source info
+                for res in results:
+                    res['source'] = f_info.full_file_path
+                    transferred_files.append(res)
 
                 return True
             except Exception as e:
                 context.log.error(f"Failed to transfer {f_info.file_name}: {e}")
-                return False
+                raise e
 
         with sftp_resource.get_client() as sftp:
             context.log.info(f"Scanning {sftp_path} (Pattern: {pattern}, Recurse: {recursive})")

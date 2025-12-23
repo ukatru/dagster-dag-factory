@@ -9,7 +9,7 @@ from ..configs.s3 import S3Config
 from ..configs.snowflake import SnowflakeConfig
 
 @OperatorRegistry.register(source="S3", target="SNOWFLAKE")
-class S3ToSnowflakeOperator(BaseOperator):
+class S3SnowflakeOperator(BaseOperator):
     """
     Loads data from S3 to Snowflake using COPY INTO.
     Creates a temporary external stage with credentials if needed.
