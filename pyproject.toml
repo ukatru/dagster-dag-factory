@@ -6,16 +6,17 @@ build-backend = "setuptools.build_meta"
 name = "dagster-dag-factory"
 version = "0.0.1"
 dependencies = [
-    "dagster",
-    "dagster-webserver",
-    "pyodbc",
-    "snowflake-connector-python",
-    "dagster-snowflake",
-    "boto3",
-    "pandas",
-    "paramiko",
-    "pyyaml",
-    "pydantic"
+    "dagster>=1.12.7",
+    "dagster-webserver>=1.12.7",
+    "pyodbc>=5.0.0",
+    "snowflake-connector-python>=3.12.0",
+    "dagster-snowflake>=0.23.0",
+    "boto3>=1.34.0",
+    "pandas>=2.2.0",
+    "paramiko>=3.4.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.7.0",
+    "cryptography>=42.0.0"
 ]
 
 [tool.setuptools]
