@@ -5,7 +5,7 @@ from pydantic import Field
 import snowflake.connector
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
-from .base import BaseConfigurableResource
+from dagster_dag_factory.resources.base import BaseConfigurableResource
 
 class SnowflakeResource(BaseConfigurableResource):
     """

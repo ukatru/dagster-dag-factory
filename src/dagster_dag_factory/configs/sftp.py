@@ -1,7 +1,7 @@
 from typing import Optional
 from pydantic import Field
-from .base import BaseConfigModel
-from .compression import CompressConfig
+from dagster_dag_factory.configs.base import BaseConfigModel
+from dagster_dag_factory.configs.compression import CompressConfig
 
 class SFTPConfig(BaseConfigModel):
     """Configuration for SFTP as a source."""

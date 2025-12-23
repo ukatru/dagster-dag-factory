@@ -5,8 +5,8 @@ from dagster_dag_factory.resources.s3 import S3Resource
 import time
 import uuid
 
-from ..configs.s3 import S3Config
-from ..configs.snowflake import SnowflakeConfig
+from dagster_dag_factory.configs.s3 import S3Config
+from dagster_dag_factory.configs.snowflake import SnowflakeConfig
 
 @OperatorRegistry.register(source="S3", target="SNOWFLAKE")
 class S3SnowflakeOperator(BaseOperator):

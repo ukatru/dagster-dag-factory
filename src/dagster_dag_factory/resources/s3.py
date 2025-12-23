@@ -6,8 +6,8 @@ import sys
 import threading
 from pydantic import Field
 import io
-from .base import BaseConfigurableResource
-from ..configs.compression import CompressConfig
+from dagster_dag_factory.resources.base import BaseConfigurableResource
+from dagster_dag_factory.configs.compression import CompressConfig
 
 class ProgressPercentage(object):
     def __init__(self, filename: str, size: float, logger=None):

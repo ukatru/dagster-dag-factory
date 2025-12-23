@@ -6,7 +6,7 @@ import os
 import stat
 from contextlib import contextmanager
 from dagster_dag_factory.models.file_info import FileInfo
-from .base import BaseConfigurableResource
+from dagster_dag_factory.resources.base import BaseConfigurableResource
 
 class SFTPResource(BaseConfigurableResource):
     """

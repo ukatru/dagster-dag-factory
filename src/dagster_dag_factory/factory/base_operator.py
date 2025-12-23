@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, Type
-from ..configs.base import BaseConfigModel
+from dagster_dag_factory.configs.base import BaseConfigModel
 
 class BaseOperator(ABC):
     """

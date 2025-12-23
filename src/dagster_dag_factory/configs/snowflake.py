@@ -1,6 +1,6 @@
 from typing import Optional
 from pydantic import Field
-from .base import BaseConfigModel
+from dagster_dag_factory.configs.base import BaseConfigModel
 
 class SnowflakeConfig(BaseConfigModel):
     """Configuration for Snowflake as a target."""

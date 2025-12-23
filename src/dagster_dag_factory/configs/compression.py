@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Optional
 from pydantic import Field
-from .base import BaseConfigModel
+from dagster_dag_factory.configs.base import BaseConfigModel
 
 class CompressionType(str, Enum):
     ZIP = 'ZIPFILE'

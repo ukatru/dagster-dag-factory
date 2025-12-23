@@ -3,7 +3,7 @@ from contextlib import contextmanager
 import pyodbc
 from dagster import get_dagster_logger
 from pydantic import Field
-from .base import BaseConfigurableResource
+from dagster_dag_factory.resources.base import BaseConfigurableResource
 
 class SQLServerResource(BaseConfigurableResource):
     """

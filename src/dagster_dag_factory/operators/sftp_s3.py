@@ -7,8 +7,8 @@ import io
 import re
 import os
 
-from ..configs.sftp import SFTPConfig
-from ..configs.s3 import S3Config
+from dagster_dag_factory.configs.sftp import SFTPConfig
+from dagster_dag_factory.configs.s3 import S3Config
 
 @OperatorRegistry.register(source="SFTP", target="S3")
 class SftpS3Operator(BaseOperator):

@@ -1,6 +1,6 @@
 from typing import Optional
 from pydantic import Field
-from .base import BaseConfigModel
+from dagster_dag_factory.configs.base import BaseConfigModel
 
 class SQLServerConfig(BaseConfigModel):
     """Configuration for SQL Server as a source."""

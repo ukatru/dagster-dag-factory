@@ -2,8 +2,8 @@ from dagster_dag_factory.factory.base_operator import BaseOperator
 from dagster_dag_factory.factory.registry import OperatorRegistry
 from dagster_dag_factory.resources.sqlserver import SQLServerResource
 from dagster_dag_factory.resources.s3 import S3Resource
-from ..configs.sqlserver import SQLServerConfig
-from ..configs.s3 import S3Config
+from dagster_dag_factory.configs.sqlserver import SQLServerConfig
+from dagster_dag_factory.configs.s3 import S3Config
 
 @OperatorRegistry.register(source="SQLSERVER", target="S3")
 class SqlServerS3Operator(BaseOperator):
