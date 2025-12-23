@@ -14,7 +14,9 @@ from dagster import (
     MultiPartitionMapping,
     AssetCheckResult,
     SourceAsset,
-    AssetKey
+    AssetKey,
+    RetryPolicy,
+    Backoff
 )
 import yaml
 from pathlib import Path
@@ -108,6 +110,22 @@ class AssetFactory:
             return FreshnessPolicy.time_window(
                 fail_window=timedelta(minutes=lag)
             )
+
+    def _get_retry_policy(self, config: Optional[Dict[str, Any]]) -> Optional[RetryPolicy]:
+        if not config:
+            return None
+            
+        backoff_str = str(config.get("backoff_type", "constant")).upper()
+        if backoff_str == "EXPONENTIAL":
+            backoff = Backoff.EXPONENTIAL
+        else:
+            backoff = Backoff.LINEAR # Default or explicit linear
+
+        return RetryPolicy(
+            max_retries=config.get("max_retries", 0),
+            delay=config.get("delay_seconds"),
+            backoff=backoff
+        )
 
     def _create_source_asset(self, config: Dict[str, Any]) -> SourceAsset:
         name = config["name"]
@@ -209,7 +227,10 @@ class AssetFactory:
         
         # Metadata and Tags
         metadata = config.get("metadata")
-        tags = config.get("tags")
+        tags = config.get("tags") or {}
+        
+        # Concurrency support
+        pool = config.get("concurrency_key")
 
         # Partition Support
         partitions_def = PartitionFactory.get_partitions_def(config.get("partitions_def"))
@@ -222,6 +243,9 @@ class AssetFactory:
 
         # Freshness Policy
         freshness_policy = self._get_freshness_policy(config.get("freshness_policy"))
+
+        # Retry Policy
+        retry_policy = self._get_retry_policy(config.get("retry_policy"))
 
         # Input dependencies with Partition Mappings
         ins = {}
@@ -296,7 +320,9 @@ class AssetFactory:
             auto_materialize_policy=automation_policy,
             freshness_policy=freshness_policy,
             metadata=metadata,
-            tags=tags
+            tags=tags,
+            retry_policy=retry_policy,
+            pool=pool
         )
         def _generated_asset(context: AssetExecutionContext, **kwargs):
             return logic(context, source, target)
