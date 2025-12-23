@@ -9,7 +9,8 @@ import re
 import os
 
 from dagster_dag_factory.configs.sftp import SFTPConfig
-from dagster_dag_factory.configs.s3 import S3Config, S3Mode
+from dagster_dag_factory.configs.s3 import S3Config
+from dagster_dag_factory.configs.enums import S3Mode
 from dagster_dag_factory.factory.helpers.dynamic import Dynamic
 
 @OperatorRegistry.register(source="SFTP", target="S3")

@@ -19,5 +19,10 @@ class JobFactory:
                  asset_sel = AssetSelection.all()
 
             tags = job_conf.get("tags")
-            jobs.append(define_asset_job(name=name, selection=asset_sel, tags=tags))
+            
+            jobs.append(define_asset_job(
+                name=name, 
+                selection=asset_sel, 
+                tags=tags,
+            ))
         return jobs

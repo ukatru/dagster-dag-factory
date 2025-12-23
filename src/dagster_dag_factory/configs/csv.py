@@ -1,13 +1,7 @@
 from typing import List, Optional
-from enum import Enum
 from pydantic import Field
 from dagster_dag_factory.configs.base import BaseConfigModel
-
-class CsvQuoting(str, Enum):
-    NONE = 'NONE'
-    ALL = 'ALL'
-    MINIMAL = 'MINIMAL'
-    NONNUMERIC = 'NONNUMERIC'
+from dagster_dag_factory.configs.enums import CsvQuoting
 
 class CsvConfig(BaseConfigModel):
     """Configuration for CSV file processing."""

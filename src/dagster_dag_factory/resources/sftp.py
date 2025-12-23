@@ -1,45 +1,95 @@
-from typing import Optional, Any, List, Callable, ClassVar
+from typing import Optional, Any, List, Callable, ClassVar, Type, Dict
+from contextlib import contextmanager
 from pydantic import Field
 import paramiko
 import re
 import os
 import stat
-from contextlib import contextmanager
+import io
+import base64
+
+# pysftp 0.2.9 is incompatible with modern paramiko because it tries to import DSSKey.
+# We monkeypatch it here to allow pysftp to load.
+if not hasattr(paramiko, 'DSSKey'):
+    paramiko.DSSKey = paramiko.PKey # Dummy type to satisfy import
+
+import pysftp
 from dagster_dag_factory.models.file_info import FileInfo
 from dagster_dag_factory.resources.base import BaseConfigurableResource
+from dagster_dag_factory.utils.base64 import from_b64_str, decode
 
 class SFTPResource(BaseConfigurableResource):
     """
     Dagster resource for SFTP operations using Paramiko.
     """
     host: str = Field(description="SFTP Hostname")
-    port: int = Field(default=22, description="SFTP Port")
+        
     username: str = Field(description="SFTP Username")
     password: Optional[str] = Field(default=None, description="SFTP Password")
-    private_key_path: Optional[str] = Field(default=None, description="Path to private key file")
+    port: int = Field(default=22, description="SFTP Port")
+    public_key: Optional[str] = Field(default=None, description="public key")
+    private_key: Optional[str] = Field(default=None, description="private key")
+    key_type: Optional[str] = Field(default="RSA", description="key type")
     
-    mask_fields: ClassVar[List[str]] = BaseConfigurableResource.mask_fields + ["password"]
+    mask_fields: ClassVar[List[str]] = BaseConfigurableResource.mask_fields + ["password", "private_key", "public_key"]
 
     @contextmanager
     def get_client(self):
-        """Yields an SFTP client."""
-        transport = paramiko.Transport((self.host, self.port))
-        try:
-            if self.private_key_path:
-                pkey = paramiko.RSAKey.from_private_key_file(self.private_key_path)
-                transport.connect(username=self.username, pkey=pkey)
+        cnopts = pysftp.CnOpts()
+        
+        # Mapping of key types to paramiko classes
+        key_map: Dict[str, Type[paramiko.PKey]] = {
+            "RSA": paramiko.RSAKey,
+            "ECDSA": paramiko.ECDSAKey,
+            "ED25519": paramiko.Ed25519Key,
+        }
+        
+        pkey_class = key_map.get(self.key_type.upper(), paramiko.RSAKey)
+
+        if self.public_key:
+            # Handle full SSH string like "ssh-rsa AAAAB3..." or just the data
+            parts = self.public_key.strip().split()
+            if len(parts) >= 2:
+                algo = parts[0]
+                key_data_b64 = parts[1]
+                public_key = pkey_class(data=base64.b64decode(key_data_b64))
+                cnopts.hostkeys.add(self.host, algo, public_key)
             else:
-                transport.connect(username=self.username, password=self.password)
-                
-            sftp = paramiko.SFTPClient.from_transport(transport)
-            yield sftp
+                # Assume it's just the B64 data part
+                public_key = pkey_class(data=base64.b64decode(self.public_key))
+                # Use appropriate algorithm string based on key type
+                algo_map = {"RSA": "ssh-rsa", "ECDSA": "ecdsa-sha2-nistp256", "ED25519": "ssh-ed25519"}
+                algo = algo_map.get(self.key_type.upper(), "ssh-rsa")
+                cnopts.hostkeys.add(self.host, algo, public_key)
+        else:
+            if not os.path.exists(os.path.expanduser('~/.ssh/known_hosts')):
+                cnopts.hostkeys = None
+        
+        connection_args = {
+            "host": self.host,
+            "username": self.username,
+            "port": self.port,
+            "cnopts": cnopts
+        }
+
+        if self.private_key:
+            # User provides private key as b64 encoded
+            private_key_str = from_b64_str(self.private_key)
+            private_key = pkey_class.from_private_key(io.StringIO(private_key_str))
+            connection_args["private_key"] = private_key
+        else:
+            connection_args["password"] = self.password
+            
+        connection = pysftp.Connection(**connection_args)
+        
+        try:
+            yield connection
         finally:
-            if transport:
-                transport.close()
+            connection.close()
 
     def list_files(
         self,
-        conn: paramiko.SFTPClient,
+        conn: pysftp.Connection,
         path: str,
         pattern: str = None,
         recursive: bool = False,

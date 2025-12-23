@@ -6,7 +6,6 @@ from dagster import (
     BackfillPolicy, 
     AutoMaterializePolicy, 
     AssetIn,
-    FreshnessPolicy,
     IdentityPartitionMapping,
     LastPartitionMapping,
     AllPartitionMapping,
@@ -29,6 +28,8 @@ from dagster_dag_factory.factory.helpers.rendering import render_config
 from dagster_dag_factory.factory.helpers.config_loaders import load_env_vars
 from dagster_dag_factory.factory.helpers.env_accessor import EnvVarAccessor
 from dagster_dag_factory.factory.helpers.dynamic import Dynamic
+from dagster_dag_factory.factory.helpers.macros import get_macros
+from dagster_dag_factory.factory.helpers.dagster_compat import FreshnessPolicy, FRESHNESS_POLICY_KEY
 from dagster_dag_factory.factory.helpers.dagster_helpers import (
     get_backfill_policy,
     get_partition_mapping,
@@ -95,15 +96,18 @@ class AssetFactory:
             # Handle Multi-dimensional keys
             from dagster import MultiPartitionKey
             if isinstance(pk, MultiPartitionKey):
-                template_vars["partition_key"] = str(pk)
+                template_vars["partition_key"] = pk.keys_by_dimension
+                # Also provide flat keys for backward compatibility if needed, 
+                # but Jinja2 prefers the nested dict for {{ partition_key.dim }}
                 for dim_name, dim_value in pk.keys_by_dimension.items():
-                    template_vars[f"partition_key.{dim_name}"] = dim_value
+                    template_vars[f"partition_key_{dim_name}"] = dim_value 
             else:
                 template_vars["partition_key"] = pk
         
         # Add vars and env
         template_vars["vars"] = Dynamic(self.env_vars)
         template_vars["env"] = EnvVarAccessor()
+        template_vars.update(get_macros(context))
         
         return template_vars
 
@@ -184,6 +188,26 @@ class AssetFactory:
         if "connection" in target:
             required_resources.add(target["connection"])
             
+        # Prepare asset arguments
+        asset_kwargs = {
+            "name": name,
+            "group_name": group,
+            "required_resource_keys": required_resources,
+            "deps": deps,
+            "ins": ins,
+            "partitions_def": partitions_def,
+            "metadata": metadata,
+            "tags": tags,
+            "retry_policy": retry_policy,
+            "pool": pool,
+        }
+        if backfill_policy:
+            asset_kwargs["backfill_policy"] = backfill_policy
+        if automation_policy:
+            asset_kwargs["auto_materialize_policy"] = automation_policy
+        if freshness_policy:
+            asset_kwargs[FRESHNESS_POLICY_KEY] = freshness_policy
+
         # Select logic based on types
         source_type = source.get("type")
         target_type = target.get("type")
@@ -192,22 +216,10 @@ class AssetFactory:
         operator_class = OperatorRegistry.get_operator(source_type, target_type)
         
         if not operator_class:
-            @asset(
-                name=name, 
-                group_name=group, 
-                required_resource_keys=required_resources,
-                deps=deps,
-                ins=ins,
-                partitions_def=partitions_def,
-                metadata=metadata,
-                tags=tags,
-                retry_policy=retry_policy,
-                pool=pool
-            )
             def _generated_asset(context: AssetExecutionContext, **kwargs):
                 raise NotImplementedError(f"No operator registered for {source_type}->{target_type}")
             
-            return [_generated_asset]
+            return [asset(**asset_kwargs)(_generated_asset)]
         else:
             # Instantiate operator
             operator = operator_class()
@@ -254,25 +266,10 @@ class AssetFactory:
                 
                 return None
 
-            @asset(
-                name=name, 
-                group_name=group, 
-                required_resource_keys=required_resources,
-                deps=deps,
-                ins=ins,
-                partitions_def=partitions_def,
-                backfill_policy=backfill_policy,
-                auto_materialize_policy=automation_policy,
-                freshness_policy=freshness_policy,
-                metadata=metadata,
-                tags=tags,
-                retry_policy=retry_policy,
-                pool=pool
-            )
             def _generated_asset(context: AssetExecutionContext, **kwargs):
                 return logic(context, source, target)
                 
             # Create checks using the operator instance
             checks = self._create_checks(AssetKey(name), config.get("checks", []), required_resources, operator)
             
-            return [_generated_asset, *checks]
+            return [asset(**asset_kwargs)(_generated_asset), *checks]

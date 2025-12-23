@@ -1,11 +1,15 @@
 from pathlib import Path
 import yaml
-from dagster import Definitions, AssetsDefinition, AssetChecksDefinition
+import warnings
+from dagster import Definitions, AssetsDefinition, AssetChecksDefinition, BetaWarning
 from dagster_dag_factory.factory.asset_factory import AssetFactory
 from dagster_dag_factory.factory.resource_factory import ResourceFactory
 from dagster_dag_factory.factory.job_factory import JobFactory
 from dagster_dag_factory.factory.schedule_factory import ScheduleFactory
 import dagster_dag_factory.operators
+
+# Suppress beta warnings for backfill_policy and other features
+warnings.filterwarnings("ignore", category=BetaWarning)
 
 class DagsterFactory:
     def __init__(self, base_dir: Path):

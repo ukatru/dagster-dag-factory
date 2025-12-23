@@ -3,7 +3,6 @@ from datetime import timedelta
 from dagster import (
     BackfillPolicy, 
     AutoMaterializePolicy, 
-    FreshnessPolicy, 
     RetryPolicy, 
     Backoff,
     IdentityPartitionMapping,
@@ -12,6 +11,7 @@ from dagster import (
     TimeWindowPartitionMapping,
     MultiPartitionMapping
 )
+from dagster_dag_factory.factory.helpers.dagster_compat import FreshnessPolicy
 
 def get_backfill_policy(config: Optional[Dict[str, Any]]) -> Optional[BackfillPolicy]:
     if not config:
@@ -64,15 +64,11 @@ def get_freshness_policy(config: Optional[Dict[str, Any]]) -> Optional[Freshness
     cron = config.get("cron")
     lag = config.get("maximum_lag_minutes", 0)
     
-    if cron:
-        return FreshnessPolicy.cron(
-            deadline_cron=cron,
-            lower_bound_delta=timedelta(minutes=lag)
-        )
-    else:
-        return FreshnessPolicy.time_window(
-            fail_window=timedelta(minutes=lag)
-        )
+    # Use direct constructor for LegacyFreshnessPolicy compatibility (1.11.1)
+    return FreshnessPolicy(
+        maximum_lag_minutes=float(lag),
+        cron_schedule=cron
+    )
 
 def get_retry_policy(config: Optional[Dict[str, Any]]) -> Optional[RetryPolicy]:
     if not config:

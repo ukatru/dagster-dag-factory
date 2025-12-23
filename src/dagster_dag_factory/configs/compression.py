@@ -1,15 +1,7 @@
-from enum import Enum
 from typing import Optional
 from pydantic import Field
 from dagster_dag_factory.configs.base import BaseConfigModel
-
-class CompressionType(str, Enum):
-    ZIP = 'ZIPFILE'
-    GUNZIP = 'GUNZIP'
-
-class CompressionAction(str, Enum):
-    COMPRESS = 'COMPRESS'
-    DECOMPRESS = 'DECOMPRESS'
+from dagster_dag_factory.configs.enums import CompressionType, CompressionAction
 
 class CompressConfig(BaseConfigModel):
     """

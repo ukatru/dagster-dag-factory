@@ -29,8 +29,8 @@ class TestConnectionLoading(unittest.TestCase):
         self.assertIn("sqlserver_prod", resources)
         sql = resources["sqlserver_prod"]
         self.assertIsInstance(sql, SQLServerResource)
-        self.assertEqual(sql.host, "localhost")
-        self.assertEqual(sql.database, "DEV_DB")
+        self.assertEqual(sql.host, "winnuc002")
+        self.assertEqual(sql.database, "DG_PLAY")
 
     def test_prod_loading(self):
         # Switch to prod

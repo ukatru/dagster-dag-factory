@@ -5,6 +5,7 @@ import json
 def test_masking():
     s3_conf = S3Config(
         connection="s3_prod",
+        bucket_name="my-bucket",
         key="raw/sales/data.csv",
         object_type="CSV"
     )
@@ -25,6 +26,7 @@ def test_masking():
 
     secret_conf = SecretConfig(
         connection="s3_prod",
+        bucket_name="my-bucket",
         key="test",
         my_secret_token="extremely_sensitive"
     )

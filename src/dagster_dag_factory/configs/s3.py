@@ -1,20 +1,11 @@
 from typing import Optional, List
-from enum import Enum
 from pydantic import Field
 from dagster_dag_factory.configs.base import BaseConfigModel
 from dagster_dag_factory.configs.compression import CompressConfig
 from dagster_dag_factory.configs.csv import CsvConfig
 from dagster_dag_factory.configs.parquet import ParquetConfig
 from dagster_dag_factory.configs.json_options import JSONOption
-
-class S3Mode(str, Enum):
-    COPY = 'COPY'
-    MULTI_FILE = 'MULTI_FILE'
-
-class S3ObjectType(str, Enum):
-    CSV = 'CSV'
-    JSON = 'JSON'
-    PARQUET = 'PARQUET'
+from dagster_dag_factory.configs.enums import S3Mode, S3ObjectType
 
 class S3Config(BaseConfigModel):
     """

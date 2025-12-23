@@ -1,6 +1,8 @@
 import re
 from typing import Any, Dict, TypeVar
+from enum import Enum
 from pydantic import BaseModel
+import jinja2
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -15,52 +17,45 @@ def render_config_model(model: T, template_vars: Dict[str, Any]) -> T:
     # Re-instantiate as the same type
     return type(model)(**rendered_dict)
 
+# Create a Jinja2 environment for rendering
+_jinja_env = jinja2.Environment(
+    variable_start_string="{{",
+    variable_end_string="}}",
+    undefined=jinja2.StrictUndefined # Fail on missing variables
+)
+
 def render_config(d: Any, template_vars: Dict[str, Any]) -> Any:
     """
-    Recursively renders configuration values using template variables.
+    Recursively renders configuration values using Jinja2.
     Supports:
-    1. Full match: "{{ env.VAR }}" -> returns EnvVar object
+    1. Full match: "{{ env.VAR }}" -> returns EnvVar object or value
     2. Interpolation: "Path: {{ vars.BASE }}/file" -> returns string
+    3. Macros: "{{ fn.date.to_date_nodash(partition_key) }}"
     """
     if isinstance(d, dict):
         return {k: render_config(v, template_vars) for k, v in d.items()}
     elif isinstance(d, list):
         return [render_config(x, template_vars) for x in d]
-    elif isinstance(d, str):
-        v = d
-        # Pattern for {{ path.to.var }}
-        pattern = re.compile(r"\{\{\s*([^}\s]+)\s*\}\}")
+    elif isinstance(d, str) and not hasattr(d, "__enum_cls__") and not isinstance(d, Enum):
+        v = d.strip()
+        # Pattern for exact {{ ... }} matches to return non-string types
+        full_match_pattern = re.compile(r"\{\{\s*([^}]*)\s*\}\}")
         
-        # 1. Full match check
-        full_match = pattern.fullmatch(v.strip())
-        if full_match:
-            return _get_value_at_path(full_match.group(1), template_vars, interpolate=False)
+        # 1. Full match check for returning raw objects (like EnvVars)
+        if full_match_pattern.fullmatch(v):
+            try:
+                # Use jinja to evaluate the expression directly
+                return _jinja_env.compile_expression(v[2:-2].strip())(**template_vars)
+            except Exception:
+                # If evaluation fails or is complex, fall back to string rendering
+                pass
 
         # 2. String interpolation
-        def replace_match(match):
-            return str(_get_value_at_path(match.group(1), template_vars, interpolate=True))
-
-        return pattern.sub(replace_match, v)
+        try:
+            template = _jinja_env.from_string(d)
+            return template.render(**template_vars)
+        except Exception as e:
+            # Fallback for complex paths or missing vars
+            return d
     else:
         return d
-
-def _get_value_at_path(path: str, template_vars: Dict[str, Any], interpolate: bool) -> Any:
-    parts = path.split('.')
-    curr = template_vars
-    for i, part in enumerate(parts):
-        is_last = (i == len(parts) - 1)
-        
-        if isinstance(curr, dict) and part in curr:
-            curr = curr[part]
-        elif hasattr(curr, part):
-            # Special handling for EnvVarAccessor (env.)
-            if hasattr(curr, "get_raw") and interpolate and not isinstance(getattr(curr, part), (dict, list)):
-                # If we are at the target property and it's an EnvVarAccessor, get raw value
-                # but only if it's the leaf node or we want interpolation
-                if is_last:
-                    return curr.get_raw(part)
-            
-            curr = getattr(curr, part)
-        else:
-            return f"{{{{{path}}}}}"
-    return curr
