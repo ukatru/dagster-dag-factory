@@ -1,8 +1,10 @@
 import os
 import unittest
 from pathlib import Path
+from dagster import EnvVar
 from dagster_dag_factory.factory.asset_factory import AssetFactory
 from dagster_dag_factory.factory.helpers.rendering import render_config
+from dagster_dag_factory.factory.helpers.env_accessor import EnvVarAccessor
 
 class TestVariableRendering(unittest.TestCase):
     def setUp(self):
@@ -19,22 +21,24 @@ class TestVariableRendering(unittest.TestCase):
         self.assertEqual(self.factory.env_vars.get("ENV_NAME"), "development")
 
     def test_rendering(self):
-        # Sample configuration with env vars
+        # Sample configuration with vars and env
         config = {
             "source": {
-                "path": "{{env.FIN_SFTP_PATH}}/incoming",
-                "project": "{{env.PROJECT_NAME}}"
+                "path": "{{vars.FIN_SFTP_PATH}}/incoming",
+                "project": "{{vars.PROJECT_NAME}}"
             },
             "target": {
-                "description": "Running in {{env.ENV_NAME}}"
+                "description": "Running in {{vars.ENV_NAME}}",
+                "secret": "{{env.MY_SECRET}}"
             },
             "other": "Literal Value",
-            "missing": "{{env.NON_EXISTENT}}"
+            "missing": "{{vars.NON_EXISTENT}}"
         }
         
         # Test vars
         template_vars = {
-            "env": self.factory.env_vars
+            "vars": self.factory.env_vars,
+            "env": EnvVarAccessor()
         }
         
         rendered = render_config(config, template_vars)
@@ -42,15 +46,19 @@ class TestVariableRendering(unittest.TestCase):
         self.assertEqual(rendered["source"]["path"], "/home/ukatru/data/incoming")
         self.assertEqual(rendered["source"]["project"], "Dagster ETL Platform")
         self.assertEqual(rendered["target"]["description"], "Running in development")
+        # Full match should return EnvVar object
+        self.assertIsInstance(rendered["target"]["secret"], EnvVar)
+        self.assertEqual(rendered["target"]["secret"].env_var_name, "MY_SECRET")
+        
         self.assertEqual(rendered["other"], "Literal Value")
         # Should remain literal if not found
-        self.assertEqual(rendered["missing"], "{{env.NON_EXISTENT}}")
+        self.assertEqual(rendered["missing"], "{{vars.NON_EXISTENT}}")
 
     def test_nested_rendering(self):
-        # test partition + env rendering
-        config = "Path: {{env.FIN_SFTP_PATH}}/date={{partition_key}}"
+        # test partition + vars rendering
+        config = "Path: {{vars.FIN_SFTP_PATH}}/date={{partition_key}}"
         template_vars = {
-            "env": self.factory.env_vars,
+            "vars": self.factory.env_vars,
             "partition_key": "2023-10-27"
         }
         rendered = render_config(config, template_vars)

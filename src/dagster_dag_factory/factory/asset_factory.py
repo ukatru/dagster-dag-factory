@@ -27,6 +27,7 @@ import dagster_dag_factory.operators
 from dagster_dag_factory.factory.partition_factory import PartitionFactory
 from dagster_dag_factory.factory.helpers.rendering import render_config
 from dagster_dag_factory.factory.helpers.config_loaders import load_env_vars
+from dagster_dag_factory.factory.helpers.env_accessor import EnvVarAccessor
 from dagster_dag_factory.factory.helpers.dagster_helpers import (
     get_backfill_policy,
     get_partition_mapping,
@@ -99,8 +100,9 @@ class AssetFactory:
             else:
                 template_vars["partition_key"] = pk
         
-        # Add env vars
-        template_vars["env"] = self.env_vars
+        # Add vars and env
+        template_vars["vars"] = self.env_vars
+        template_vars["env"] = EnvVarAccessor()
         
         return template_vars
 

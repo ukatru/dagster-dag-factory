@@ -3,33 +3,32 @@ import os
 import importlib
 import inspect
 from pathlib import Path
-from typing import Dict, Any, Type
+from typing import Dict, Any, Type, Optional
 from dagster import EnvVar, ConfigurableResource
 import dagster_dag_factory.resources as resources_module
+from dagster_dag_factory.factory.helpers.config_loaders import load_env_config
 
 class ResourceFactory:
     """
     Factory class to load Dagster resources dynamically from YAML configurations.
-    Supports environment variable substitution for values starting with 'env:'.
+    Supports hierarchical environment-based loading and 'env:' variable substitution.
     """
     
     @staticmethod
     def load_resources_from_dir(directory: Path) -> Dict[str, Any]:
         """
-        Loads all resources defined in YAML files within the specified directory.
+        Loads resources following the environment hierarchy (common.yaml + <ENV>.yaml).
         """
         resources = {}
         if not directory.exists():
             return resources
 
-        for yaml_file in directory.rglob("*.yaml"):
-            with open(yaml_file) as f:
-                config = yaml.safe_load(f)
-                if not config or "resources" not in config:
-                    continue
-                
-                for res_name, res_def in config["resources"].items():
-                    resources[res_name] = ResourceFactory._create_resource(res_def)
+        # Use the generalized hierarchical loader
+        merged_config = load_env_config(directory)
+        
+        if "resources" in merged_config:
+            for res_name, res_def in merged_config["resources"].items():
+                resources[res_name] = ResourceFactory._create_resource(res_def)
         
         return resources
 
@@ -48,12 +47,18 @@ class ResourceFactory:
         return resources
 
     @staticmethod
-    def _create_resource(res_def: Dict[str, Any]) -> Any:
+    def _create_resource(res_def: Dict[str, Any], template_vars: Optional[Dict[str, Any]] = None) -> Any:
         res_type_name = res_def.get("type")
         res_config = res_def.get("config", {})
         
-        # Parse config for EnvVars
-        parsed_config = ResourceFactory._parse_config_values(res_config)
+        # If no template vars provided (base case), we still provide env accessor
+        if template_vars is None:
+            from dagster_dag_factory.factory.helpers.env_accessor import EnvVarAccessor
+            template_vars = {"env": EnvVarAccessor()}
+
+        # Parse config using unified rendering
+        from dagster_dag_factory.factory.helpers.rendering import render_config
+        parsed_config = render_config(res_config, template_vars)
         
         # Dynamically find the resource class
         res_class = ResourceFactory._get_resource_class(res_type_name)
@@ -71,18 +76,3 @@ class ResourceFactory:
         if hasattr(resources_module, type_name):
             return getattr(resources_module, type_name)
         return None
-
-    @staticmethod
-    def _parse_config_values(config: Any) -> Any:
-        """
-        recursively parses dictionary values to replace 'env:VAR_NAME' with dagster.EnvVar.
-        """
-        if isinstance(config, dict):
-            return {k: ResourceFactory._parse_config_values(v) for k, v in config.items()}
-        elif isinstance(config, list):
-            return [ResourceFactory._parse_config_values(v) for v in config]
-        elif isinstance(config, str) and config.startswith("env:"):
-            env_var_name = config[4:]
-            return EnvVar(env_var_name)
-        else:
-            return config
