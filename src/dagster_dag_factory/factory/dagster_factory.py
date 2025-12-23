@@ -9,7 +9,7 @@ from dagster_dag_factory.factory.schedule_factory import ScheduleFactory
 class DagsterFactory:
     def __init__(self, base_dir: Path):
         self.base_dir = base_dir
-        self.asset_factory = AssetFactory(base_dir / "defs")
+        self.asset_factory = AssetFactory(base_dir)
         self.resource_factory = ResourceFactory()
         self.job_factory = JobFactory()
         self.schedule_factory = ScheduleFactory()

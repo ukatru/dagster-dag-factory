@@ -20,20 +20,31 @@ from dagster import (
 )
 import yaml
 from pathlib import Path
-from datetime import timedelta
 from typing import Dict, Any, List, Optional
 from dagster_dag_factory.factory.registry import OperatorRegistry
 # Import operators package to start registration
 import dagster_dag_factory.operators  
 from dagster_dag_factory.factory.partition_factory import PartitionFactory
+from dagster_dag_factory.factory.helpers.rendering import render_config
+from dagster_dag_factory.factory.helpers.config_loaders import load_env_vars
+from dagster_dag_factory.factory.helpers.dagster_helpers import (
+    get_backfill_policy,
+    get_partition_mapping,
+    get_automation_policy,
+    get_freshness_policy,
+    get_retry_policy
+)
 
 class AssetFactory:
-    def __init__(self, base_dir: str):
-        self.base_dir = Path(base_dir)
+    def __init__(self, base_dir: Path):
+        self.base_dir = base_dir
+        self.env_vars = load_env_vars(self.base_dir)
+
 
     def load_assets(self):
         all_defs = []
-        for yaml_file in self.base_dir.rglob("*.yaml"):
+        defs_dir = self.base_dir / "defs"
+        for yaml_file in defs_dir.rglob("*.yaml"):
             with open(yaml_file) as f:
                 config = yaml.safe_load(f)
                 
@@ -50,82 +61,6 @@ class AssetFactory:
                     all_defs.append(self._create_source_asset(sa_conf))
         return all_defs
 
-    def _get_backfill_policy(self, config: Optional[Dict[str, Any]]) -> Optional[BackfillPolicy]:
-        if not config:
-            return None
-        p_type = config.get("type", "").lower()
-        if p_type == "single_run":
-            return BackfillPolicy.single_run()
-        elif p_type == "multi_run":
-            max_partitions_per_run = config.get("max_partitions_per_run", 1)
-            return BackfillPolicy.multi_run(max_partitions_per_run)
-        return None
-
-    def _get_partition_mapping(self, config: Optional[Dict[str, Any]]):
-        if not config:
-            return None
-        p_type = config.get("type", "").lower()
-        if p_type == "identity":
-            return IdentityPartitionMapping()
-        elif p_type == "last":
-            return LastPartitionMapping()
-        elif p_type == "all":
-            return AllPartitionMapping()
-        elif p_type == "time_window":
-            return TimeWindowPartitionMapping(
-                allow_incomplete_mappings=config.get("allow_incomplete_mappings", False),
-                start_offset=config.get("start_offset", 0),
-                end_offset=config.get("end_offset", 0)
-            )
-        elif p_type == "multi":
-            mappings_config = config.get("mappings", {})
-            mappings = {}
-            for dim_name, mapping_conf in mappings_config.items():
-                mappings[dim_name] = self._get_partition_mapping(mapping_conf)
-            return MultiPartitionMapping(mappings)
-        return None
-
-    def _get_automation_policy(self, policy_name: Optional[str]) -> Optional[AutoMaterializePolicy]:
-        if not policy_name:
-            return None
-        if policy_name.lower() == "eager":
-            return AutoMaterializePolicy.eager()
-        elif policy_name.lower() == "lazy":
-            return AutoMaterializePolicy.lazy()
-        return None
-
-    def _get_freshness_policy(self, config: Optional[Dict[str, Any]]) -> Optional[FreshnessPolicy]:
-        if not config:
-            return None
-        
-        cron = config.get("cron")
-        lag = config.get("maximum_lag_minutes", 0)
-        
-        if cron:
-            return FreshnessPolicy.cron(
-                deadline_cron=cron,
-                lower_bound_delta=timedelta(minutes=lag)
-            )
-        else:
-            return FreshnessPolicy.time_window(
-                fail_window=timedelta(minutes=lag)
-            )
-
-    def _get_retry_policy(self, config: Optional[Dict[str, Any]]) -> Optional[RetryPolicy]:
-        if not config:
-            return None
-            
-        backoff_str = str(config.get("backoff_type", "constant")).upper()
-        if backoff_str == "EXPONENTIAL":
-            backoff = Backoff.EXPONENTIAL
-        else:
-            backoff = Backoff.LINEAR # Default or explicit linear
-
-        return RetryPolicy(
-            max_retries=config.get("max_retries", 0),
-            delay=config.get("delay_seconds"),
-            backoff=backoff
-        )
 
     def _create_source_asset(self, config: Dict[str, Any]) -> SourceAsset:
         name = config["name"]
@@ -163,24 +98,12 @@ class AssetFactory:
                     template_vars[f"partition_key.{dim_name}"] = dim_value
             else:
                 template_vars["partition_key"] = pk
+        
+        # Add env vars
+        template_vars["env"] = self.env_vars
+        
         return template_vars
 
-    def _render_config(self, d: Any, template_vars: Dict[str, Any]) -> Any:
-        if isinstance(d, dict):
-            new_d = {}
-            for k, v in d.items():
-                new_d[k] = self._render_config(v, template_vars)
-            return new_d
-        elif isinstance(d, list):
-            return [self._render_config(x, template_vars) for x in d]
-        elif isinstance(d, str):
-            v = d
-            for var_k, var_v in template_vars.items():
-                v = v.replace(f"{{{{ {var_k} }}}}", str(var_v))
-                v = v.replace(f"{{{{{var_k}}}}}", str(var_v))
-            return v
-        else:
-            return d
 
     def _create_checks(self, asset_key: AssetKey, config_list: List[Dict[str, Any]], required_resources: set):
         from dagster_dag_factory.factory.check_registry import CheckRegistry
@@ -205,7 +128,7 @@ class AssetFactory:
             @asset_check(asset=asset_key, name=check_name, required_resource_keys=check_resources)
             def _generated_check(context: AssetCheckExecutionContext):
                 template_vars = self._get_template_vars(context)
-                rendered_conf = self._render_config(check_conf, template_vars)
+                rendered_conf = render_config(check_conf, template_vars)
                 return check_obj.execute(context, rendered_conf)
             
             return _generated_check
@@ -236,22 +159,22 @@ class AssetFactory:
         partitions_def = PartitionFactory.get_partitions_def(config.get("partitions_def"))
         
         # Backfill Policy
-        backfill_policy = self._get_backfill_policy(config.get("backfill_policy"))
+        backfill_policy = get_backfill_policy(config.get("backfill_policy"))
         
         # Automation Policy
-        automation_policy = self._get_automation_policy(config.get("automation_policy"))
+        automation_policy = get_automation_policy(config.get("automation_policy"))
 
         # Freshness Policy
-        freshness_policy = self._get_freshness_policy(config.get("freshness_policy"))
+        freshness_policy = get_freshness_policy(config.get("freshness_policy"))
 
         # Retry Policy
-        retry_policy = self._get_retry_policy(config.get("retry_policy"))
+        retry_policy = get_retry_policy(config.get("retry_policy"))
 
         # Input dependencies with Partition Mappings
         ins = {}
         ins_config = config.get("ins", {})
         for dep_name, dep_conf in ins_config.items():
-            partition_mapping = self._get_partition_mapping(dep_conf.get("partition_mapping"))
+            partition_mapping = get_partition_mapping(dep_conf.get("partition_mapping"))
             ins[dep_name] = AssetIn(partition_mapping=partition_mapping)
 
         # Remove assets in 'ins' from 'deps' to avoid duplication error
@@ -281,8 +204,8 @@ class AssetFactory:
                 template_vars = self._get_template_vars(context)
                 
                 # Render source and target configs
-                rendered_source = self._render_config(source_conf, template_vars)
-                rendered_target = self._render_config(target_conf, template_vars)
+                rendered_source = render_config(source_conf, template_vars)
+                rendered_target = render_config(target_conf, template_vars)
 
                 # Validate using Op schemas if provided
                 if operator.source_config_schema:
