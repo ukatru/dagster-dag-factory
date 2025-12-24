@@ -5,6 +5,7 @@ from datetime import datetime
 import math
 from croniter import croniter, croniter_range
 
+
 def _normalize_date(value: Any) -> Any:
     """Helper to extract a date string if the value is a dict or Dynamic object."""
     if not value:
@@ -15,9 +16,10 @@ def _normalize_date(value: Any) -> Any:
         return getattr(value, "date")
     return value
 
+
 class DateMacros:
     """Helper functions for date manipulation in templates using Pendulum."""
-    
+
     @staticmethod
     def to_date_nodash(value: Any) -> str:
         """Converts yyyy-mm-dd or any parseable date to yyyymmdd."""
@@ -26,7 +28,11 @@ class DateMacros:
             return ""
         try:
             # Handle pendulum objects or strings
-            dt = pendulum.instance(value) if hasattr(value, "isoformat") else pendulum.parse(str(value))
+            dt = (
+                pendulum.instance(value)
+                if hasattr(value, "isoformat")
+                else pendulum.parse(str(value))
+            )
             return dt.format("YYYYMMDD")
         except Exception:
             return str(value)
@@ -38,7 +44,11 @@ class DateMacros:
         if not value:
             return ""
         try:
-            dt = pendulum.instance(value) if hasattr(value, "isoformat") else pendulum.parse(str(value))
+            dt = (
+                pendulum.instance(value)
+                if hasattr(value, "isoformat")
+                else pendulum.parse(str(value))
+            )
             result = dt.format(fmt)
             # If requesting Unix timestamp, return as integer for direct comparison in predicates
             if fmt in ("X", "x"):
@@ -46,6 +56,7 @@ class DateMacros:
             return result
         except Exception:
             return str(value)
+
 
 class CronMacros:
     """Helper functions for cron-based date calculations."""
@@ -55,22 +66,30 @@ class CronMacros:
         """Difference between starts and ends based on interval (days, week, month, year)."""
         start_date = _normalize_date(start_date)
         end_date = _normalize_date(end_date)
-        
-        dt_start = pendulum.instance(start_date) if hasattr(start_date, "isoformat") else pendulum.parse(str(start_date))
-        dt_end = pendulum.instance(end_date) if hasattr(end_date, "isoformat") else pendulum.parse(str(end_date))
-        
+
+        dt_start = (
+            pendulum.instance(start_date)
+            if hasattr(start_date, "isoformat")
+            else pendulum.parse(str(start_date))
+        )
+        dt_end = (
+            pendulum.instance(end_date)
+            if hasattr(end_date, "isoformat")
+            else pendulum.parse(str(end_date))
+        )
+
         if dt_end < dt_start:
-            raise ValueError('end_date is less than start_date')
+            raise ValueError("end_date is less than start_date")
 
         diff = dt_end - dt_start
-        
-        if interval == 'days':
+
+        if interval == "days":
             return diff.days + 1
-        elif interval == 'week':
+        elif interval == "week":
             return math.ceil((diff.days + 1) / 7)
-        elif interval == 'month':
+        elif interval == "month":
             return diff.months + (diff.years * 12)
-        elif interval == 'year':
+        elif interval == "year":
             return diff.years
         return 0
 
@@ -78,7 +97,11 @@ class CronMacros:
     def next(schedule: str, base_date: Any, count: int = 1) -> str:
         """Returns the next execution date(s) for a cron schedule."""
         base_date = _normalize_date(base_date)
-        dt = pendulum.instance(base_date) if hasattr(base_date, "isoformat") else pendulum.parse(str(base_date))
+        dt = (
+            pendulum.instance(base_date)
+            if hasattr(base_date, "isoformat")
+            else pendulum.parse(str(base_date))
+        )
         ret_val = dt
         for _ in range(count):
             ret_val = croniter(schedule, ret_val).get_next(datetime)
@@ -88,7 +111,11 @@ class CronMacros:
     def prev(schedule: str, base_date: Any, count: int = 1) -> str:
         """Returns the previous execution date(s) for a cron schedule."""
         base_date = _normalize_date(base_date)
-        dt = pendulum.instance(base_date) if hasattr(base_date, "isoformat") else pendulum.parse(str(base_date))
+        dt = (
+            pendulum.instance(base_date)
+            if hasattr(base_date, "isoformat")
+            else pendulum.parse(str(base_date))
+        )
         ret_val = dt
         for _ in range(count):
             ret_val = croniter(schedule, ret_val).get_prev(datetime)
@@ -99,9 +126,18 @@ class CronMacros:
         """Returns a list of scheduled dates between start and end."""
         start_date = _normalize_date(start_date)
         end_date = _normalize_date(end_date)
-        dt_start = pendulum.instance(start_date) if hasattr(start_date, "isoformat") else pendulum.parse(str(start_date))
-        dt_end = pendulum.instance(end_date) if hasattr(end_date, "isoformat") else pendulum.parse(str(end_date))
+        dt_start = (
+            pendulum.instance(start_date)
+            if hasattr(start_date, "isoformat")
+            else pendulum.parse(str(start_date))
+        )
+        dt_end = (
+            pendulum.instance(end_date)
+            if hasattr(end_date, "isoformat")
+            else pendulum.parse(str(end_date))
+        )
         return [str(d) for d in croniter_range(dt_start, dt_end, schedule)]
+
 
 def get_macros(context: Optional[Any] = None) -> Dict[str, Any]:
     """Returns a dictionary of functions to be exposed in templates."""
@@ -110,8 +146,5 @@ def get_macros(context: Optional[Any] = None) -> Dict[str, Any]:
     return {
         "date": date_helpers,
         "cron": cron_helpers,
-        "fn": {
-            "date": date_helpers,
-            "cron": cron_helpers
-        }
+        "fn": {"date": date_helpers, "cron": cron_helpers},
     }

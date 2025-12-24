@@ -1,13 +1,15 @@
 from dataclasses import dataclass, field
-from typing import Optional, Any, Dict
+from typing import Any, Dict
 import os
 from datetime import datetime
+
 
 @dataclass
 class FileInfo:
     """
     Standardized file metadata, aligned with Niagara's FileInfo model.
     """
+
     file_name: str
     full_file_path: str
     root_path: str = ""
@@ -35,12 +37,12 @@ class FileInfo:
     def name(self) -> str:
         """File name without extension."""
         return os.path.splitext(self.file_name)[0]
-        
+
     @property
     def ext(self) -> str:
         """File extension with dot."""
         return os.path.splitext(self.file_name)[1]
-        
+
     @property
     def modified_date(self) -> str:
         """Human readable modified date."""
@@ -58,7 +60,7 @@ class FileInfo:
             "modified_date": self.modified_date,
             "name": self.name,
             "ext": self.ext,
-            **self.extra
+            **self.extra,
         }
 
     def __repr__(self):

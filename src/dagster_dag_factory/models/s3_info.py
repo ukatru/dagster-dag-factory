@@ -1,13 +1,15 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Optional
 import os
 from datetime import datetime
+
 
 class S3Info(BaseModel):
     """
     Metadata representation of an S3 object.
     Mirrors the Niagara S3Info model for consistent listing and filtering logic.
     """
+
     bucket_name: str
     key: str
     prefix: Optional[str] = None
@@ -39,7 +41,7 @@ class S3Info(BaseModel):
     def object_path(self) -> str:
         """The path within the prefix if prefix is specified, otherwise same as key."""
         if self.prefix and self.key.startswith(self.prefix):
-            return self.key[len(self.prefix):].lstrip('/')
+            return self.key[len(self.prefix) :].lstrip("/")
         return self.key
 
     @property
@@ -59,5 +61,5 @@ class S3Info(BaseModel):
             "name": self.name,
             "ext": self.ext,
             "path": self.path,
-            "object_path": self.object_path
+            "object_path": self.object_path,
         }

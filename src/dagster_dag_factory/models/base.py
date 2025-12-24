@@ -1,11 +1,13 @@
-from typing import List, Any
+from typing import List
 import json
+
 
 class ModelBase:
     """
     Base model for all configuration objects, providing sensitive field masking.
     Following the Niagara pattern.
     """
+
     mask_fields: List[str] = []
 
     def __init__(self, **kwargs):
@@ -26,15 +28,20 @@ class ModelBase:
                 if field in obj and obj[field]:
                     # Mask with asterisks, handle if it's not a string
                     val = str(obj[field])
-                    obj[field] = '*' * len(val)
+                    obj[field] = "*" * len(val)
 
         for k, v in obj.items():
             if isinstance(v, ModelBase):
                 obj[k] = v._mask_fields()
             elif isinstance(v, list):
-                obj[k] = [x._mask_fields() if isinstance(x, ModelBase) else x for x in v]
+                obj[k] = [
+                    x._mask_fields() if isinstance(x, ModelBase) else x for x in v
+                ]
             elif isinstance(v, dict):
-                obj[k] = {nk: nv._mask_fields() if isinstance(nv, ModelBase) else nv for nk, nv in v.items()}
+                obj[k] = {
+                    nk: nv._mask_fields() if isinstance(nv, ModelBase) else nv
+                    for nk, nv in v.items()
+                }
 
         return obj
 
@@ -44,10 +51,13 @@ class ModelBase:
         """
         obj = {**self.__dict__}
         for k, v in obj.items():
-            if hasattr(v, 'to_dict'):
+            if hasattr(v, "to_dict"):
                 obj[k] = v.to_dict()
             elif isinstance(v, list):
-                obj[k] = [x.to_dict() if hasattr(x, 'to_dict') else x for x in v]
+                obj[k] = [x.to_dict() if hasattr(x, "to_dict") else x for x in v]
             elif isinstance(v, dict):
-                obj[k] = {nk: nv.to_dict() if hasattr(nv, 'to_dict') else nv for nk, nv in v.items()}
+                obj[k] = {
+                    nk: nv.to_dict() if hasattr(nv, "to_dict") else nv
+                    for nk, nv in v.items()
+                }
         return obj

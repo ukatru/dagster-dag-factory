@@ -1,4 +1,4 @@
-from typing import Optional, Any, List, Callable, ClassVar, Type, Dict
+from typing import Optional, List, Callable, ClassVar, Type, Dict
 from contextlib import contextmanager
 from pydantic import Field
 import paramiko
@@ -10,78 +10,94 @@ import base64
 
 # pysftp 0.2.9 is incompatible with modern paramiko because it tries to import DSSKey.
 # We monkeypatch it here to allow pysftp to load.
-if not hasattr(paramiko, 'DSSKey'):
-    paramiko.DSSKey = paramiko.PKey # Dummy type to satisfy import
+if not hasattr(paramiko, "DSSKey"):
+    paramiko.DSSKey = paramiko.PKey  # Dummy type to satisfy import
 
 import pysftp
 from dagster_dag_factory.models.file_info import FileInfo
 from dagster_dag_factory.resources.base import BaseConfigurableResource
-from dagster_dag_factory.utils.base64 import from_b64_str, decode
+from dagster_dag_factory.utils.base64 import from_b64_str
+
 
 class SFTPResource(BaseConfigurableResource):
     """
     Dagster resource for SFTP operations using Paramiko.
     """
+
     host: str = Field(description="SFTP Hostname")
-        
+
     username: str = Field(description="SFTP Username")
     password: Optional[str] = Field(default=None, description="SFTP Password")
     port: int = Field(default=22, description="SFTP Port")
     public_key: Optional[str] = Field(default=None, description="public key")
     private_key: Optional[str] = Field(default=None, description="private key")
     key_type: Optional[str] = Field(default="RSA", description="key type")
-    
-    mask_fields: ClassVar[List[str]] = BaseConfigurableResource.mask_fields + ["password", "private_key", "public_key"]
+
+    mask_fields: ClassVar[List[str]] = BaseConfigurableResource.mask_fields + [
+        "password",
+        "private_key",
+        "public_key",
+    ]
 
     @contextmanager
     def get_client(self):
         cnopts = pysftp.CnOpts()
-        
+
         # Mapping of key types to paramiko classes
         key_map: Dict[str, Type[paramiko.PKey]] = {
             "RSA": paramiko.RSAKey,
             "ECDSA": paramiko.ECDSAKey,
             "ED25519": paramiko.Ed25519Key,
         }
-        
+
         pkey_class = key_map.get(self.key_type.upper(), paramiko.RSAKey)
 
-        if self.public_key:
+        resolved_host = self.resolve("host")
+        resolved_username = self.resolve("username")
+        resolved_password = self.resolve("password")
+        resolved_public_key = self.resolve("public_key")
+        resolved_private_key = self.resolve("private_key")
+
+        if resolved_public_key:
             # Handle full SSH string like "ssh-rsa AAAAB3..." or just the data
-            parts = self.public_key.strip().split()
+            parts = resolved_public_key.strip().split()
             if len(parts) >= 2:
                 algo = parts[0]
                 key_data_b64 = parts[1]
                 public_key = pkey_class(data=base64.b64decode(key_data_b64))
-                cnopts.hostkeys.add(self.host, algo, public_key)
+                cnopts.hostkeys.add(resolved_host, algo, public_key)
             else:
                 # Assume it's just the B64 data part
-                public_key = pkey_class(data=base64.b64decode(self.public_key))
+                public_key = pkey_class(data=base64.b64decode(resolved_public_key))
                 # Use appropriate algorithm string based on key type
-                algo_map = {"RSA": "ssh-rsa", "ECDSA": "ecdsa-sha2-nistp256", "ED25519": "ssh-ed25519"}
+                algo_map = {
+                    "RSA": "ssh-rsa",
+                    "ECDSA": "ecdsa-sha2-nistp256",
+                    "ED25519": "ssh-ed25519",
+                }
                 algo = algo_map.get(self.key_type.upper(), "ssh-rsa")
-                cnopts.hostkeys.add(self.host, algo, public_key)
+                cnopts.hostkeys.add(resolved_host, algo, public_key)
         else:
-            if not os.path.exists(os.path.expanduser('~/.ssh/known_hosts')):
+            if not os.path.exists(os.path.expanduser("~/.ssh/known_hosts")):
                 cnopts.hostkeys = None
-        
+
         connection_args = {
-            "host": self.host,
-            "username": self.username,
+            "host": resolved_host,
+            "username": resolved_username,
             "port": self.port,
-            "cnopts": cnopts
+            "cnopts": cnopts,
         }
 
-        if self.private_key:
+        if resolved_private_key:
             # User provides private key as b64 encoded
-            private_key_str = from_b64_str(self.private_key)
+            private_key_str = from_b64_str(resolved_private_key)
             private_key = pkey_class.from_private_key(io.StringIO(private_key_str))
             connection_args["private_key"] = private_key
         else:
-            connection_args["password"] = self.password
-            
+            connection_args["password"] = resolved_password
+
         connection = pysftp.Connection(**connection_args)
-        
+
         try:
             yield connection
         finally:
@@ -95,15 +111,16 @@ class SFTPResource(BaseConfigurableResource):
         recursive: bool = False,
         check_is_modifing: bool = False,
         predicate: Callable[[FileInfo], bool] = None,
-        on_each: Callable[[FileInfo, int], bool] = None
+        on_each: Callable[[FileInfo, int], bool] = None,
     ) -> List[FileInfo]:
         """
         List files in directory with advanced filtering and callback support.
         """
         import time
-        
-        logging_action = lambda action, kv: None # Placeholder for now or use logger if available
-        
+
+        def logging_action(action, kv):
+            return None  # Placeholder for now or use logger if available
+
         regex = re.compile(pattern) if pattern else None
         infos: List[FileInfo] = []
 
@@ -115,21 +132,21 @@ class SFTPResource(BaseConfigurableResource):
                 try:
                     attr = conn.stat(current_path)
                     if not stat.S_ISDIR(attr.st_mode):
-                         # Implementation for single file...
-                         # Reuse item logic by wrapping in list or similar
-                         # For now let's stick to directory logical structure, 
-                         # if path is a file, we treat it as single item list
-                         items = [attr] 
-                         # Paramiko st_mode doesn't have filename attached strictly if it came from stat
-                         # We might need to attach filename manually if it's missing
-                         # BUT listdir_attr returns SFTPAttributes which usually have filename.
-                         # conn.stat returns SFTPAttributes without filename usually.
-                         attr.filename = os.path.basename(current_path)
+                        # Implementation for single file...
+                        # Reuse item logic by wrapping in list or similar
+                        # For now let's stick to directory logical structure,
+                        # if path is a file, we treat it as single item list
+                        items = [attr]
+                        # Paramiko st_mode doesn't have filename attached strictly if it came from stat
+                        # We might need to attach filename manually if it's missing
+                        # BUT listdir_attr returns SFTPAttributes which usually have filename.
+                        # conn.stat returns SFTPAttributes without filename usually.
+                        attr.filename = os.path.basename(current_path)
                     else:
                         raise
                 except Exception:
-                     # Log warning?
-                     return False
+                    # Log warning?
+                    return False
 
             # If items is a single attr from stat, it might not be iterable like listdir_attr result
             if not isinstance(items, list):
@@ -140,20 +157,24 @@ class SFTPResource(BaseConfigurableResource):
             for item in items:
                 mode = item.st_mode
                 file_name = item.filename
-                full_file_path = os.path.join(current_path, file_name) if current_path != file_name else current_path
-                
+                full_file_path = (
+                    os.path.join(current_path, file_name)
+                    if current_path != file_name
+                    else current_path
+                )
+
                 # If we stat-ed a single file, full_file_path calculation might be tricky if we don't be careful.
-                # If current_path is /foo/bar.txt, basename is bar.txt. 
+                # If current_path is /foo/bar.txt, basename is bar.txt.
                 # If we join /foo/bar.txt and bar.txt we get wrong path.
                 # Let's trust listdir behavior mostly. for single file checks, the user usually provides directory path+pattern.
 
                 if stat.S_ISDIR(mode):
-                    if file_name not in ['.', '..']:
+                    if file_name not in [".", ".."]:
                         dirs.append(full_file_path)
                     continue
                 elif not stat.S_ISREG(mode):
                     continue
-                
+
                 if regex and not regex.match(file_name):
                     continue
 
@@ -165,17 +186,17 @@ class SFTPResource(BaseConfigurableResource):
                     if (current_ts - item.st_mtime) < 60:
                         # File is too new, might be writing
                         continue
-                
+
                 info = FileInfo(
                     file_name=file_name,
                     full_file_path=full_file_path,
                     root_path=path,
                     file_size=item.st_size,
-                    modified_ts=item.st_mtime
+                    modified_ts=item.st_mtime,
                 )
 
                 if predicate and not predicate(info):
-                   continue
+                    continue
 
                 if on_each:
                     # Callback returns False to stop? Or just return value doesn't matter?
@@ -183,9 +204,9 @@ class SFTPResource(BaseConfigurableResource):
                     # So if on_each returns False, we don't append.
                     if on_each(info, len(infos) + 1) is False:
                         continue
-                
+
                 infos.append(info)
-            
+
             if recursive:
                 for dir_path in dirs:
                     _list_files(dir_path)

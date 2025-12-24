@@ -2,12 +2,25 @@ from typing import List, Any, ClassVar
 from dagster import ConfigurableResource
 import json
 
+
 class BaseConfigurableResource(ConfigurableResource):
     """
     Base resource class that supports sensitive field masking for logging.
     Following the Niagara mask_fields pattern.
     """
-    mask_fields: ClassVar[List[str]] = ["password", "secret", "key", "token", "private_key"]
+
+    mask_fields: ClassVar[List[str]] = [
+        "password",
+        "secret",
+        "key",
+        "token",
+        "private_key",
+    ]
+
+    def resolve(self, field_name: str) -> Any:
+        """Resolves a field value, handling Dagster EnvVar objects if present."""
+        val = getattr(self, field_name)
+        return val.get_value() if hasattr(val, "get_value") else val
 
     def to_masked_dict(self) -> dict:
         """Returns a dict of resource config with sensitive fields masked."""

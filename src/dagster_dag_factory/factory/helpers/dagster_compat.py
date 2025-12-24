@@ -4,10 +4,12 @@ import packaging.version
 # 1. Handle FreshnessPolicy rename
 try:
     from dagster import LegacyFreshnessPolicy as FreshnessPolicy
+
     HAS_LEGACY_FP = True
 except ImportError:
     try:
         from dagster import FreshnessPolicy
+
         HAS_LEGACY_FP = False
     except ImportError:
         FreshnessPolicy = None

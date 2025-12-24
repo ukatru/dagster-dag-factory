@@ -6,9 +6,10 @@ import jinja2
 
 T = TypeVar("T", bound=BaseModel)
 
+
 def render_config_model(model: T, template_vars: Dict[str, Any]) -> T:
     """
-    Renders an existing Pydantic model by converting to dict, rendering, 
+    Renders an existing Pydantic model by converting to dict, rendering,
     and re-instantiating. Useful for runtime overrides (e.g., inside a loop).
     """
     # Convert to dict, including extras
@@ -17,12 +18,14 @@ def render_config_model(model: T, template_vars: Dict[str, Any]) -> T:
     # Re-instantiate as the same type
     return type(model)(**rendered_dict)
 
+
 # Create a Jinja2 environment for rendering
 _jinja_env = jinja2.Environment(
     variable_start_string="{{",
     variable_end_string="}}",
-    undefined=jinja2.StrictUndefined # Fail on missing variables
+    undefined=jinja2.StrictUndefined,  # Fail on missing variables
 )
+
 
 def render_config(d: Any, template_vars: Dict[str, Any]) -> Any:
     """
@@ -36,11 +39,15 @@ def render_config(d: Any, template_vars: Dict[str, Any]) -> Any:
         return {k: render_config(v, template_vars) for k, v in d.items()}
     elif isinstance(d, list):
         return [render_config(x, template_vars) for x in d]
-    elif isinstance(d, str) and not hasattr(d, "__enum_cls__") and not isinstance(d, Enum):
+    elif (
+        isinstance(d, str)
+        and not hasattr(d, "__enum_cls__")
+        and not isinstance(d, Enum)
+    ):
         v = d.strip()
         # Pattern for exact {{ ... }} matches to return non-string types
         full_match_pattern = re.compile(r"\{\{\s*([^}]*)\s*\}\}")
-        
+
         # 1. Full match check for returning raw objects (like EnvVars)
         if full_match_pattern.fullmatch(v):
             try:
@@ -54,7 +61,7 @@ def render_config(d: Any, template_vars: Dict[str, Any]) -> Any:
         try:
             template = _jinja_env.from_string(d)
             return template.render(**template_vars)
-        except Exception as e:
+        except Exception:
             # Fallback for complex paths or missing vars
             return d
     else:
