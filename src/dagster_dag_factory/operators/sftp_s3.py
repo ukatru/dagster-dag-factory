@@ -51,6 +51,7 @@ class SftpS3Operator(BaseOperator):
             try:
                 from datetime import datetime, timedelta
                 
+                # Prepare evaluation context with Dynamic wrappers for dot-notation
                 eval_context = {
                     "file_name": info.file_name,
                     "file_size": info.file_size,
@@ -64,6 +65,15 @@ class SftpS3Operator(BaseOperator):
                     "re": re,
                     "info": info
                 }
+                
+                # Wrap dictionaries from template_vars to allow dot-notation in eval()
+                from dagster_dag_factory.factory.helpers.dynamic import Dynamic
+                for k, v in template_vars.items():
+                    if isinstance(v, dict):
+                        eval_context[k] = Dynamic(v)
+                    else:
+                        eval_context[k] = v
+
                 # Allow standard python builtins by not passing restricted __builtins__
                 return eval(predicate_expr, eval_context)
             except Exception as e:
@@ -148,7 +158,47 @@ class SftpS3Operator(BaseOperator):
         # 4. Execute Scan & Transfer
         start_time = time.time()
         with sftp_resource.get_client() as sftp:
-            context.log.info(f"Scanning {sftp_path} (Pattern: {pattern}, Recurse: {recursive})")
+            scan_msg = f"Scanning {sftp_path} (Pattern: {pattern}, Recurse: {recursive})"
+            
+            # Show the partition key if we are running in a partitioned context
+            pk = template_vars.get("partition_key")
+            if pk:
+                scan_msg += f" [Partition: {pk}]"
+
+            if predicate_expr:
+                scan_msg += f" with Predicate: {predicate_expr}"
+                
+            context.log.info(scan_msg)
+
+            # MACRO DEBUG: Try to resolve the 'threshold' if it's using a standard look-back pattern
+            # This makes the "invisible" calculation visible in your logs!
+            if predicate_expr and "fn.cron.prev" in predicate_expr:
+                try:
+                    import pendulum
+                    from dagster_dag_factory.factory.helpers.dynamic import Dynamic
+                    from datetime import datetime
+                    
+                    # Prepare a dummy eval context for pre-calculation
+                    pre_eval_context = {
+                        "datetime": datetime,
+                        "pendulum": pendulum,
+                        "now_ts": time.time(),
+                    }
+                    for k, v in template_vars.items():
+                        if isinstance(v, dict):
+                            pre_eval_context[k] = Dynamic(v)
+                        else:
+                            pre_eval_context[k] = v
+                    
+                    # Try to extract and evaluate the Right-Hand-Side after '>=' or '>'
+                    if ">=" in predicate_expr:
+                        rhs = predicate_expr.split(">=")[-1].strip()
+                        threshold_val = eval(rhs, pre_eval_context)
+                        if isinstance(threshold_val, (int, float)):
+                            dt_str = pendulum.from_timestamp(threshold_val).to_datetime_string()
+                            context.log.info(f"Predicate Threshold (Resolved): {threshold_val} ({dt_str} UTC)")
+                except Exception:
+                    pass
             
             sftp_resource.list_files(
                 conn=sftp,

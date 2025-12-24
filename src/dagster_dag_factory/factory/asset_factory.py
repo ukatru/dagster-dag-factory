@@ -30,6 +30,7 @@ from dagster_dag_factory.factory.helpers.env_accessor import EnvVarAccessor
 from dagster_dag_factory.factory.helpers.dynamic import Dynamic
 from dagster_dag_factory.factory.helpers.macros import get_macros
 from dagster_dag_factory.factory.helpers.dagster_compat import FreshnessPolicy, FRESHNESS_POLICY_KEY
+from dagster_dag_factory.factory.helpers.auto_materialize import get_auto_materialize_policy
 from dagster_dag_factory.factory.helpers.dagster_helpers import (
     get_backfill_policy,
     get_partition_mapping,
@@ -48,20 +49,35 @@ class AssetFactory:
         all_defs = []
         defs_dir = self.base_dir / "defs"
         for yaml_file in defs_dir.rglob("*.yaml"):
-            with open(yaml_file) as f:
-                config = yaml.safe_load(f)
+            try:
+                with open(yaml_file) as f:
+                    config = yaml.safe_load(f)
+                    
+                if not config:
+                    continue
+
+                if "assets" in config:
+                    for asset_conf in config["assets"]:
+                        try:
+                            asset_defs = self._create_asset(asset_conf)
+                            if isinstance(asset_defs, list):
+                                all_defs.extend(asset_defs)
+                            else:
+                                all_defs.append(asset_defs)
+                        except Exception as e:
+                            print(f"ERROR: Failed to create asset from {yaml_file}: {e}")
+                            raise e
                 
-            if "assets" in config:
-                for asset_conf in config["assets"]:
-                    asset_defs = self._create_asset(asset_conf)
-                    if isinstance(asset_defs, list):
-                        all_defs.extend(asset_defs)
-                    else:
-                        all_defs.append(asset_defs)
-            
-            if "source_assets" in config:
-                for sa_conf in config["source_assets"]:
-                    all_defs.append(self._create_source_asset(sa_conf))
+                if "source_assets" in config:
+                    for sa_conf in config["source_assets"]:
+                        try:
+                            all_defs.append(self._create_source_asset(sa_conf))
+                        except Exception as e:
+                            print(f"ERROR: Failed to create source asset from {yaml_file}: {e}")
+                            raise e
+            except Exception as e:
+                print(f"ERROR: Critical failure loading {yaml_file}: {e}")
+                raise e
         return all_defs
 
 
@@ -96,13 +112,16 @@ class AssetFactory:
             # Handle Multi-dimensional keys
             from dagster import MultiPartitionKey
             if isinstance(pk, MultiPartitionKey):
-                template_vars["partition_key"] = pk.keys_by_dimension
+                template_vars["partition_key"] = Dynamic(pk.keys_by_dimension)
                 # Also provide flat keys for backward compatibility if needed, 
                 # but Jinja2 prefers the nested dict for {{ partition_key.dim }}
                 for dim_name, dim_value in pk.keys_by_dimension.items():
                     template_vars[f"partition_key_{dim_name}"] = dim_value 
             else:
                 template_vars["partition_key"] = pk
+        else:
+            # Fallback for ad-hoc or non-partitioned runs to prevent NameError in macros
+            template_vars["partition_key"] = None
         
         # Add vars and env
         template_vars["vars"] = Dynamic(self.env_vars)
@@ -144,6 +163,7 @@ class AssetFactory:
     def _create_asset(self, config):
         name = config["name"]
         group = config.get("group", "default")
+        description = config.get("description")
         
         source = config.get("source", {})
         target = config.get("target", {})
@@ -167,6 +187,9 @@ class AssetFactory:
 
         # Freshness Policy
         freshness_policy = get_freshness_policy(config.get("freshness_policy"))
+        
+        # Auto-Materialize Policy
+        auto_materialize_policy = get_auto_materialize_policy(config.get("auto_materialize_policy"))
 
         # Retry Policy
         retry_policy = get_retry_policy(config.get("retry_policy"))
@@ -192,6 +215,7 @@ class AssetFactory:
         asset_kwargs = {
             "name": name,
             "group_name": group,
+            "description": description,
             "required_resource_keys": required_resources,
             "deps": deps,
             "ins": ins,
@@ -205,6 +229,8 @@ class AssetFactory:
             asset_kwargs["backfill_policy"] = backfill_policy
         if automation_policy:
             asset_kwargs["auto_materialize_policy"] = automation_policy
+        elif auto_materialize_policy:
+            asset_kwargs["auto_materialize_policy"] = auto_materialize_policy
         if freshness_policy:
             asset_kwargs[FRESHNESS_POLICY_KEY] = freshness_policy
 

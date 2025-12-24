@@ -16,10 +16,26 @@ class PartitionFactory:
     """
     Creates Dagster PartitionsDefinition objects from YAML configuration.
     """
-    @staticmethod
-    def get_partitions_def(config: Dict[str, Any]) -> Optional[PartitionsDefinition]:
+    _cache: Dict[str, PartitionsDefinition] = {}
+
+    @classmethod
+    def get_partitions_def(cls, config: Dict[str, Any]) -> Optional[PartitionsDefinition]:
         if not config:
             return None
+            
+        # Use a stable JSON string as the cache key
+        import json
+        cache_key = json.dumps(config, sort_keys=True)
+        if cache_key in cls._cache:
+            return cls._cache[cache_key]
+            
+        partitions_def = cls._get_partitions_def_inner(config)
+        if partitions_def:
+            cls._cache[cache_key] = partitions_def
+        return partitions_def
+
+    @staticmethod
+    def _get_partitions_def_inner(config: Dict[str, Any]) -> Optional[PartitionsDefinition]:
             
         p_type = config.get("type", "").lower()
         
@@ -75,11 +91,29 @@ class PartitionFactory:
         # Cron-based (TimeWindow)
         elif p_type == "cron":
             cron_schedule = config.get("cron_schedule")
-            start_date = config.get("start_date")
+            start_val = config.get("start") or config.get("start_date")
             timezone = config.get("timezone", "UTC")
+            
+            # Use a format that includes timezone to be safe with Dagster 1.11.1
+            fmt = config.get("fmt", "%Y-%m-%d %H:%M%z")
+            
+            if start_val:
+                import pendulum
+                # Parse to pendulum object
+                if hasattr(start_val, "isoformat"):
+                    dt = pendulum.instance(start_val)
+                else:
+                    dt = pendulum.parse(str(start_val))
+                
+                # Ensure it has the correct timezone and format it to match fmt
+                start = dt.in_timezone(timezone).strftime(fmt)
+            else:
+                start = None
+                
             return TimeWindowPartitionsDefinition(
                 cron_schedule=cron_schedule,
-                start_date=start_date,
+                start=start,
+                fmt=fmt,
                 timezone=timezone
             )
             
