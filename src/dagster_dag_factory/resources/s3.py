@@ -320,9 +320,7 @@ class S3Resource(BaseConfigurableResource):
 
     # Configuration
     region_name: str = Field(default="us-east-1", description="AWS Region")
-    endpoint_url: Optional[str] = Field(
-        default="None", description="Custom endpoint URL"
-    )
+    endpoint_url: Optional[str] = Field(description="Custom endpoint URL")
     profile_name: Optional[str] = Field(default=None, description="AWS Profile name")
     use_unsigned_session: bool = Field(
         default=False, description="Use unsigned session"
