@@ -16,7 +16,7 @@ class ScheduleFactory:
         for sched_conf in schedules_config:
             name = sched_conf["name"]
             job_name = sched_conf["job"]
-            cron_schedule = sched_conf["cron"]
+            cron_schedule = sched_conf.get("cron")
             
             if job_name not in jobs_map:
                 print(f"Warning: Job '{job_name}' not found for schedule '{name}'")
@@ -39,7 +39,8 @@ class ScheduleFactory:
                 is_time_partitioned = isinstance(p_def, TimeWindowPartitionsDefinition)
                 
                 if is_time_partitioned:
-                    # Don't pass cron_schedule for time-partitioned jobs
+                    # Dagster disallows explicit cron for time-partitioned jobs; 
+                    # use hour_offset/minute_offset in the partitions_def instead.
                     schedules.append(build_schedule_from_partitioned_job(
                         name=name,
                         job=job
