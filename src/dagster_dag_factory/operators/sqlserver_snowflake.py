@@ -1,8 +1,6 @@
 import time
 from typing import Dict, Any
-from dagster_dag_factory.operators.db_operator import (
-    SnowflakeBaseOperator,
-)
+from dagster_dag_factory.operators.base_operator import BaseOperator
 from dagster_dag_factory.factory.registry import OperatorRegistry
 from dagster_dag_factory.resources.sqlserver import SQLServerResource
 from dagster_dag_factory.resources.snowflake import SnowflakeResource
@@ -11,7 +9,7 @@ from dagster_dag_factory.configs.snowflake import SnowflakeConfig
 
 
 @OperatorRegistry.register(source="SQLSERVER", target="SNOWFLAKE")
-class SqlServerSnowflakeOperator(SnowflakeBaseOperator):
+class SqlServerSnowflakeOperator(BaseOperator):
     """
     High-performance SQL Server to Snowflake transfer.
     Uses chunked fetching and bulk uploads to prevent memory issues.
@@ -20,22 +18,25 @@ class SqlServerSnowflakeOperator(SnowflakeBaseOperator):
     source_config_schema = SQLServerConfig
     target_config_schema = SnowflakeConfig
 
-    def perform_transfer(
+    def _execute(
         self,
         context,
-        source_res: SQLServerResource,
-        source_cfg: SQLServerConfig,
-        target_res: SnowflakeResource,
-        target_cfg: SnowflakeConfig,
+        source_config: SQLServerConfig,
+        target_config: SnowflakeConfig,
+        template_vars: Dict[str, Any],
+        **kwargs,
     ) -> Dict[str, Any]:
+        source_res: SQLServerResource = kwargs.get("source_resource")
+        target_res: SnowflakeResource = kwargs.get("target_resource")
+        
         start_time = time.time()
-        chunk_size = source_cfg.rows_chunk
-        query = source_cfg.sql
-        params = source_cfg.params
+        chunk_size = source_config.rows_chunk
+        query = source_config.sql
+        params = source_config.params
 
-        if not query and source_cfg.table_name:
-            cols = "*" if not source_cfg.columns else ", ".join(source_cfg.columns)
-            query = f"SELECT {cols} FROM {f'{source_cfg.schema_name}.' if source_cfg.schema_name else ''}{source_cfg.table_name}"
+        if not query and source_config.table_name:
+            cols = "*" if not source_config.columns else ", ".join(source_config.columns)
+            query = f"SELECT {cols} FROM {f'{source_config.schema_name}.' if source_config.schema_name else ''}{source_config.table_name}"
 
         if not query:
             raise ValueError(
@@ -46,7 +47,7 @@ class SqlServerSnowflakeOperator(SnowflakeBaseOperator):
         try:
             with source_res.get_cursor() as source_cursor:
                 context.log.info(
-                    f"Opening Snowflake connection for target: {target_cfg.table_name}"
+                    f"Opening Snowflake connection for target: {target_config.table_name}"
                 )
                 with target_res.get_connection() as target_conn:
                     with target_conn.cursor() as target_cursor:
@@ -78,7 +79,7 @@ class SqlServerSnowflakeOperator(SnowflakeBaseOperator):
                             self._execute_write(
                                 context=context,
                                 target_res=target_res,
-                                target_cfg=target_cfg,
+                                target_config=target_config,
                                 target_cursor=target_cursor,
                                 rows=row_tuples,
                                 columns=columns,
@@ -100,7 +101,7 @@ class SqlServerSnowflakeOperator(SnowflakeBaseOperator):
             "rows_transferred": total_rows,
             "duration_seconds": round(duration, 2),
             "rows_per_second": round(total_rows / duration, 2) if duration > 0 else 0,
-            "target_table": target_cfg.table_name,
+            "target_table": target_config.table_name,
         }
 
         return {"summary": summary, "observations": {"rows_transferred": total_rows}}
@@ -109,7 +110,7 @@ class SqlServerSnowflakeOperator(SnowflakeBaseOperator):
         self,
         context,
         target_res: SnowflakeResource,
-        target_cfg,
+        target_config,
         target_cursor,
         rows,
         columns,
@@ -118,7 +119,7 @@ class SqlServerSnowflakeOperator(SnowflakeBaseOperator):
         """
         Implements optimized Snowflake writing.
         """
-        table = target_cfg.table_name
+        table = target_config.table_name
 
         # Use resource bulk helper
         target_res.bulk_insert_rows(

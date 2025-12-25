@@ -1,47 +1,156 @@
+"""
+Base Operator for Streaming Pattern
+
+Provides a consistent interface for all operators following proven streaming patterns:
+- execute() orchestrates the flow
+- pre_execute() for setup and validation
+- _execute() for operator-specific logic (abstract)
+- post_execute() for cleanup and stats
+
+Factory contract is maintained - no changes needed to factory code.
+"""
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Type
-from dagster import AssetCheckExecutionContext, AssetCheckResult
-from dagster_dag_factory.configs.base import BaseConfigModel
+from typing import Any, Dict
 
 
 class BaseOperator(ABC):
     """
-    Abstract base class for all operators.
-    Operators handle the logic for moving data from a specific source type to a target type.
+    Base class for all streaming operators.
+    
+    Provides lifecycle hooks and maintains factory contract.
+    Subclasses only need to implement _execute() with their specific logic.
     """
-
-    # Optional schema definitions for self-documentation and validation
-    source_config_schema: Optional[Type[BaseConfigModel]] = None
-    target_config_schema: Optional[Type[BaseConfigModel]] = None
-
-    @abstractmethod
+    
     def execute(
         self,
         context,
-        source_config: Any,
-        target_config: Any,
+        source_config,
+        target_config,
         template_vars: Dict[str, Any],
-        **kwargs,
+        **kwargs
     ) -> Dict[str, Any]:
         """
-        Execute the operator logic.
+        Main execution method called by the factory.
+        
+        This method orchestrates the execution flow:
+        1. Pre-execution (setup, validation)
+        2. Main execution (operator-specific logic)
+        3. Post-execution (cleanup, stats)
+        
+        Args:
+            context: Dagster context
+            source_config: Source configuration model
+            target_config: Target configuration model
+            template_vars: Template variables for rendering
+            **kwargs: Additional resources (source_resource, target_resource, etc.)
+        
+        Returns:
+            Dict containing execution results and statistics
+        """
+        # 1. Pre-execution
+        self.pre_execute(context, source_config, target_config, **kwargs)
+        
+        # 2. Main execution (operator-specific)
+        result = self._execute(context, source_config, target_config, template_vars, **kwargs)
+        
+        # 3. Post-execution
+        self.post_execute(context, result)
+        
+        return result
+    
+    def pre_execute(
+        self,
+        context,
+        source_config,
+        target_config,
+        **kwargs
+    ) -> None:
+        """
+        Pre-execution hook for setup and validation.
+        
+        Override this method to add operator-specific setup logic:
+        - Validate configurations
+        - Initialize resources
+        - Set up state
+        
+        Args:
+            context: Dagster context
+            source_config: Source configuration model
+            target_config: Target configuration model
+            **kwargs: Additional resources
         """
         pass
-
-    def execute_check(
-        self, context: AssetCheckExecutionContext, config: dict
-    ) -> AssetCheckResult:
+    
+    @abstractmethod
+    def _execute(
+        self,
+        context,
+        source_config,
+        target_config,
+        template_vars: Dict[str, Any],
+        **kwargs
+    ) -> Dict[str, Any]:
         """
-        A generic high-performance data quality check that compares persisted metadata
-        (Observations) from the asset materialization.
+        Operator-specific execution logic.
+        
+        Subclasses MUST implement this method with their transfer logic.
+        Use execute_streaming() utility for threaded operations.
+        
+        Args:
+            context: Dagster context
+            source_config: Source configuration model
+            target_config: Target configuration model
+            template_vars: Template variables for rendering
+            **kwargs: Additional resources
+        
+        Returns:
+            Dict containing execution results and statistics
         """
+        raise NotImplementedError("Subclass must implement _execute()")
+    
+    def post_execute(
+        self,
+        context,
+        result: Dict[str, Any]
+    ) -> None:
+        """
+        Post-execution hook for cleanup and stats.
+        
+        Override this method to add operator-specific cleanup logic:
+        - Close connections
+        - Generate statistics
+        - Log results
+        
+        Args:
+            context: Dagster context
+            result: Execution results from _execute()
+        """
+        pass
+    
+    def log_configs(self, context, source_config, target_config):
+        """
+        Log configurations for troubleshooting.
+        
+        This method is called by the factory before execute().
+        Default implementation does nothing - override if needed.
+        """
+        pass
+    
+    def execute_check(self, context, config: dict):
+        """
+        Execute a data quality check.
+        
+        This method is called by the factory for asset checks.
+        Default implementation supports observation_diff checks.
+        """
+        from dagster import AssetCheckResult
+        
         check_type = config.get("type", "observation_diff")
-
+        
         if check_type == "observation_diff":
             return self._execute_observation_diff(context, config)
-
-        # Default fallback for unknown check types.
-        # Operators can override this method to handle custom check types.
+        
+        # Default fallback for unknown check types
         context.log.warn(
             f"Unknown check type '{check_type}' for operator {self.__class__.__name__}"
         )
@@ -51,16 +160,19 @@ class BaseOperator(ABC):
                 "error": f"Operator {self.__class__.__name__} does not support check type '{check_type}'"
             },
         )
-
-    def _execute_observation_diff(
-        self, context: AssetCheckExecutionContext, config: dict
-    ) -> AssetCheckResult:
+    
+    def _execute_observation_diff(self, context, config: dict):
+        """
+        Execute an observation diff check comparing source and target counts.
+        """
+        from dagster import AssetCheckResult
+        
         asset_key = config.get("_asset_key")
         source_key = config["source_key"]
         target_key = config["target_key"]
         threshold = config.get("threshold", 0)
-
-        # 1. Retrieve the latest materialization event for this asset
+        
+        # Retrieve the latest materialization event
         event = context.instance.get_latest_materialization_event(asset_key)
         if not event:
             return AssetCheckResult(
@@ -69,10 +181,10 @@ class BaseOperator(ABC):
                     "error": "Check failed: No materialization event found for this asset."
                 },
             )
-
+        
         metadata = event.asset_materialization.metadata
-
-        # 2. Extract raw values from Dagster Metadata
+        
+        # Extract values from Dagster Metadata
         def get_val(key):
             m_val = metadata.get(key)
             if m_val is None:
@@ -80,101 +192,27 @@ class BaseOperator(ABC):
             if hasattr(m_val, "value"):
                 return m_val.value
             return m_val
-
+        
         source_val = get_val(source_key)
         target_val = get_val(target_key)
-
-        # 3. Validation Logic
+        
         if source_val is None or target_val is None:
-            missing = []
-            if source_val is None:
-                missing.append(f"source:{source_key}")
-            if target_val is None:
-                missing.append(f"target:{target_key}")
-
             return AssetCheckResult(
                 passed=False,
                 metadata={
-                    "error": f"Missing observation keys: {', '.join(missing)}",
-                    "available_keys": list(metadata.keys()),
+                    "error": f"Missing observation keys: {source_key}={source_val}, {target_key}={target_val}"
                 },
             )
-
-        try:
-            diff = abs(float(source_val) - float(target_val))
-            passed = diff <= threshold
-
-            return AssetCheckResult(
-                passed=passed,
-                metadata={
-                    "source_key": source_key,
-                    "source_value": source_val,
-                    "target_key": target_key,
-                    "target_value": target_val,
-                    "difference": diff,
-                    "threshold": threshold,
-                    "status": "PASS" if passed else "FAIL",
-                },
-            )
-        except (ValueError, TypeError) as e:
-            return AssetCheckResult(
-                passed=False,
-                metadata={
-                    "error": f"Value comparison failed: {str(e)}",
-                    "source_value": str(source_val),
-                    "target_value": str(target_val),
-                },
-            )
-
-    def log_configs(self, context, source_config: Any, target_config: Any):
-        """Logs the rendered configurations for troubleshooting."""
-        import json
-
-        def get_masked_cfg(config):
-            if hasattr(config, "to_masked_dict"):
-                masked_cfg = config.to_masked_dict()
-            elif isinstance(config, dict):
-                masked_cfg = self._mask_dict(config)
-            else:
-                masked_cfg = {"config": str(config)}
-
-            # Try to enrich with connection details
-            connection_name = None
-            if isinstance(config, dict):
-                connection_name = config.get("connection")
-            elif hasattr(config, "connection"):
-                connection_name = config.connection
-
-            if connection_name and hasattr(context, "resources"):
-                # Dagster resources are accessed via attributes on context.resources
-                resource = getattr(context.resources, connection_name, None)
-                if resource and hasattr(resource, "to_masked_dict"):
-                    masked_cfg["connection_details"] = resource.to_masked_dict()
-                elif resource:
-                    # Fallback for resources that don't inherit from our base
-                    masked_cfg["connection_details"] = {"type": str(type(resource))}
-
-            return masked_cfg
-
-        # Log Source
-        context.log.info(
-            f"Source Configuration:\n{json.dumps(get_masked_cfg(source_config), indent=2, default=str)}"
+        
+        diff = abs(source_val - target_val)
+        passed = diff <= threshold
+        
+        return AssetCheckResult(
+            passed=passed,
+            metadata={
+                source_key: source_val,
+                target_key: target_val,
+                "diff": diff,
+                "threshold": threshold,
+            },
         )
-
-        # Log Target
-        context.log.info(
-            f"Target Configuration:\n{json.dumps(get_masked_cfg(target_config), indent=2, default=str)}"
-        )
-
-    def _mask_dict(self, d: Any) -> Any:
-        if isinstance(d, dict):
-            new_d = {}
-            for k, v in d.items():
-                if any(x in k.lower() for x in ["pass", "secret", "key", "token"]):
-                    new_d[k] = "******" if v else v
-                else:
-                    new_d[k] = self._mask_dict(v)
-            return new_d
-        elif isinstance(d, list):
-            return [self._mask_dict(x) for x in d]
-        return d

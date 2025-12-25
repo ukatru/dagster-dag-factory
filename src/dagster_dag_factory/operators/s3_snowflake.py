@@ -20,7 +20,7 @@ class S3SnowflakeOperator(BaseOperator):
     source_config_schema = S3Config
     target_config_schema = SnowflakeConfig
 
-    def execute(
+    def _execute(
         self,
         context,
         source_config: S3Config,

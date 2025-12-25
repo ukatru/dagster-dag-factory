@@ -99,6 +99,10 @@ class SafeSplitBuffer:
         if not data:
             return
 
+        if self.logger and len(self.buffer) == 0:
+            # Log first write to show data is flowing
+            self.logger.info(f"Smart buffer receiving data ({len(data)} bytes)...")
+
         self.buffer += data
 
         if self.multi_file:
@@ -179,10 +183,16 @@ class SafeSplitBuffer:
 
             # Upload
             if self.multi_file:
+                if self.logger:
+                    self.logger.info(f"[{final_key}] Uploading part {part_num} ({len(final_data) / (1024*1024):.2f} MB)")
                 self.s3_client.put_object(
                     Bucket=self.bucket_name, Key=final_key, Body=final_data
                 )
+                if self.logger:
+                    self.logger.info(f"[{final_key}] Completed upload of part {part_num}")
             else:
+                if self.logger:
+                    self.logger.info(f"[{self.key}] Uploading part {part_num} ({len(final_data) / (1024*1024):.2f} MB)")
                 resp = self.s3_client.upload_part(
                     Bucket=self.bucket_name,
                     Key=self.key,
@@ -192,6 +202,8 @@ class SafeSplitBuffer:
                 )
                 with self.lock:
                     self.etags.append({"PartNumber": part_num, "ETag": resp["ETag"]})
+                if self.logger:
+                    self.logger.info(f"[{self.key}] Completed upload of part {part_num}")
 
             with self.lock:
                 self.transferred_files.append(
