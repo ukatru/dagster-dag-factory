@@ -333,7 +333,35 @@ Used for loading data into Snowflake.
 
 ---
 
-## 🎓 10. Tutorial: Your First Pipeline
+## � 11. Environment Hierarchy
+The factory is designed to handle multiple environments (e.g., `dev`, `test`, `prod`) using a **Deep Merge** strategy. This applies to both **Connections** and **Global Variables**.
+
+### **How Merging Works**
+The system always looks for two files in a directory:
+1.  `common.yaml`: Contains settings shared by all environments.
+2.  `<ENV>.yaml`: Contains overrides for the current environment (controlled by the `ENV` environment variable).
+
+**Example in `vars/`:**
+*   `common.yaml`: `landing_bucket: "company-raw"`
+*   `prod.yaml`: `landing_bucket: "company-raw-prod"`
+
+If `ENV=prod`, `{{ vars.landing_bucket }}` will resolve to `"company-raw-prod"`.
+
+---
+
+## 📁 12. Project Folder Structure
+Here is where you should put your files to ensure the factory finds them:
+
+| Directory | Purpose | What to put there |
+| :--- | :--- | :--- |
+| `src/pipelines/defs/` | **Pipeline Logic** | All your `.yaml` pipeline definitions. |
+| `src/pipelines/connections/`| **Connections** | `common.yaml`, `prod.yaml`, etc. for resources. |
+| `src/pipelines/vars/` | **Global Constants**| `common.yaml`, `prod.yaml`, etc. for variables. |
+| `src/pipelines/lib/` | **Custom Macros** | Custom Python logic for Jinja (if needed). |
+
+---
+
+## �🎓 13. Tutorial: Your First Pipeline
 
 ### Step 1: Create the YAML
 Create `src/pipelines/defs/my_first_pipeline.yaml`:
