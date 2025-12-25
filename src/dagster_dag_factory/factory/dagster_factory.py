@@ -7,25 +7,44 @@ from dagster_dag_factory.factory.resource_factory import ResourceFactory
 from dagster_dag_factory.factory.job_factory import JobFactory
 from dagster_dag_factory.factory.schedule_factory import ScheduleFactory
 from dagster_dag_factory.factory.sensor_factory import SensorFactory
+from dagster_dag_factory.factory.utils.logging import log_header, log_action, log_action_stats, log_marker
+import time
 
 # Suppress beta warnings for backfill_policy and other features
 warnings.filterwarnings("ignore", category=BetaWarning)
 
 
 class DagsterFactory:
-    def __init__(self, base_dir: Path):
+    def __init__(self, base_dir: Path, verbose_build: bool = None):
         self.base_dir = Path(base_dir)
         self.asset_factory = AssetFactory(self.base_dir)
         self.resource_factory = ResourceFactory()
         self.job_factory = JobFactory()
         self.schedule_factory = ScheduleFactory()
         self.sensor_factory = SensorFactory()
+        self.verbose_build = verbose_build
 
     def build_definitions(self) -> Definitions:
+        import os
+        
+        # Decide whether to show build logs
+        # True: always, False: never, None: skip if in a Dagster worker process
+        show_logs = self.verbose_build
+        if show_logs is None:
+            # Silence logs in Dagster worker processes (Run or Step workers)
+            is_worker = "DAGSTER_RUN_ID" in os.environ or "DAGSTER_STEP_KEY" in os.environ
+            show_logs = not is_worker
+
+        start_time = time.time()
+        if show_logs:
+            log_header("Dagster Factory | Starting Definition Build")
+
         # 1. Load Resources
         resources = self.resource_factory.load_resources_from_dir(
             self.base_dir / "connections"
         )
+        if show_logs:
+            log_action("LOAD_RESOURCES", count=len(resources), status="OK")
 
         # 2. Load Assets and Checks
         assets = []
@@ -37,6 +56,10 @@ class DagsterFactory:
 
         # Iterate YAMLs and separate assets from checks
         for yaml_file in (self.base_dir / "defs").rglob("*.yaml"):
+            file_assets = 0
+            file_jobs = 0
+            file_sensors = 0
+            
             try:
                 with open(yaml_file) as f:
                     config = yaml.safe_load(f) or {}
@@ -54,6 +77,7 @@ class DagsterFactory:
                                     asset_checks.append(item)
                                 elif isinstance(item, AssetsDefinition):
                                     assets.append(item)
+                                    file_assets += 1
                                     # Store partition info for later use in schedules
                                     if item.partitions_def:
                                         asset_partitions[item.key.to_user_string()] = (
@@ -81,13 +105,22 @@ class DagsterFactory:
                                             }
                                         )
                         except Exception as e:
-                            # Re-raising with filename in the message ensures visibility in the UI
-                            raise type(e)(f"Error in {yaml_file.name}: {e}") from e
+                            # Enhance exception with file name before re-raising
+                            from dagster_dag_factory.utils.exceptions import DagsterFactoryError
+                            error_msg = str(e)
+                            if isinstance(e, DagsterFactoryError):
+                                e.file_name = yaml_file.name
+                                error_msg = str(e)
+                            
+                            if show_logs:
+                                log_action("LOAD_FAILED", file=yaml_file.name, error=error_msg)
+                            raise
 
                 if "jobs" in config:
                     for job_conf in config["jobs"]:
                         try:
                             jobs_config.append(job_conf)
+                            file_jobs += 1
 
                             # Determine if this job is partitioned
                             is_job_partitioned = False
@@ -114,7 +147,9 @@ class DagsterFactory:
                                     }
                                 )
                         except Exception as e:
-                            print(f"ERROR: Failed to process job from {yaml_file}: {e}")
+                            if show_logs:
+                                log_action("LOAD_FAILED", file=yaml_file.name, error=str(e))
+                                print(f"ERROR: Failed to process job from {yaml_file}: {e}")
                             raise e
 
                 if "schedules" in config:
@@ -143,13 +178,22 @@ class DagsterFactory:
                 if "sensors" in config:
                     for sensor_conf in config["sensors"]:
                         sensors_config.append(sensor_conf)
+                        file_sensors += 1
 
                 if "resources" in config:
                     local_resources = self.resource_factory.load_resources_from_config(
                         config["resources"]
                     )
                     resources.update(local_resources)
+                
+                if show_logs:
+                    log_action("LOAD_YAML", file=yaml_file.name, assets=file_assets, jobs=file_jobs, sensors=file_sensors)
+
             except Exception as e:
+                # Catch all errors at file level and log them once
+                if show_logs:
+                    log_action("LOAD_FAILED", file=yaml_file.name, error=str(e))
+                # Re-raise with filename for Dagster UI visibility
                 raise type(e)(f"Critical failure loading {yaml_file.name}: {e}") from e
 
         # 3. Create Jobs
@@ -165,6 +209,15 @@ class DagsterFactory:
         sensors = self.sensor_factory.create_sensors(
             sensors_config, jobs_map, self.asset_factory
         )
+        
+        if show_logs:
+            log_marker("mini")
+            log_action_stats("BUILD_STATS", start_time, 
+                             assets=len(assets), 
+                             checks=len(asset_checks), 
+                             jobs=len(jobs), 
+                             sensors=len(sensors))
+            log_marker("strong")
 
         return Definitions(
             assets=assets,

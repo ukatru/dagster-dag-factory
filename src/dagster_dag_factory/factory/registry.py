@@ -29,8 +29,10 @@ class OperatorRegistry:
         return wrapper
 
     @classmethod
-    def get_operator(cls, source: str, target: str) -> Optional[Type["BaseOperator"]]:
+    def get_operator(cls, source: Optional[str], target: Optional[str]) -> Optional[Type["BaseOperator"]]:
         """
         Retrieve a registered operator class.
         """
+        if source is None or target is None:
+            return None
         return cls._registry.get((source.upper(), target.upper()))

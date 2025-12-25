@@ -268,6 +268,39 @@ class AssetFactory:
             # Instantiate operator
             operator = operator_class()
 
+            # Strict Build-Phase Validation (Discovery time structural check)
+            if operator.source_config_schema:
+                try:
+                    # Merge top-level connection into payload
+                    source_payload = source.get("configs", {}).copy()
+                    for k, v in source.items():
+                        if k not in ["configs", "type"] and k not in source_payload:
+                            source_payload[k] = v
+                    operator.source_config_schema(**source_payload)
+                except Exception as e:
+                    from dagster_dag_factory.utils.exceptions import DagsterFactoryError
+                    raise DagsterFactoryError(
+                        message=str(e),
+                        asset_name=name,
+                        error_type="SOURCE_CONFIG_ERROR"
+                    )
+            
+            if operator.target_config_schema:
+                try:
+                    target_payload = target.get("configs", {}).copy()
+                    for k, v in target.items():
+                        if k not in ["configs", "type"] and k not in target_payload:
+                            target_payload[k] = v
+                    operator.target_config_schema(**target_payload)
+                except Exception as e:
+                    from dagster_dag_factory.utils.exceptions import DagsterFactoryError
+                    raise DagsterFactoryError(
+                        message=str(e),
+                        asset_name=name,
+                        error_type="TARGET_CONFIG_ERROR"
+                    )
+
+
             def logic(context, source_conf, target_conf, operator=operator):
                 template_vars = self._get_template_vars(context)
 
