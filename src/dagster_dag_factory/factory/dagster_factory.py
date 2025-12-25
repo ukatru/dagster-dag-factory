@@ -6,6 +6,7 @@ from dagster_dag_factory.factory.asset_factory import AssetFactory
 from dagster_dag_factory.factory.resource_factory import ResourceFactory
 from dagster_dag_factory.factory.job_factory import JobFactory
 from dagster_dag_factory.factory.schedule_factory import ScheduleFactory
+from dagster_dag_factory.factory.sensor_factory import SensorFactory
 
 # Suppress beta warnings for backfill_policy and other features
 warnings.filterwarnings("ignore", category=BetaWarning)
@@ -18,6 +19,7 @@ class DagsterFactory:
         self.resource_factory = ResourceFactory()
         self.job_factory = JobFactory()
         self.schedule_factory = ScheduleFactory()
+        self.sensor_factory = SensorFactory()
 
     def build_definitions(self) -> Definitions:
         # 1. Load Resources
@@ -30,6 +32,7 @@ class DagsterFactory:
         asset_checks = []
         jobs_config = []
         schedules_config = []
+        sensors_config = []
         asset_partitions = {}  # Track partitions per asset
 
         # Iterate YAMLs and separate assets from checks
@@ -55,6 +58,27 @@ class DagsterFactory:
                                     if item.partitions_def:
                                         asset_partitions[item.key.to_user_string()] = (
                                             item.partitions_def
+                                        )
+
+                                    # AUTO-INFER SCHEDULE for Asset-Level 'cron'
+                                    if "cron" in asset_conf:
+                                        schedules_config.append(
+                                            {
+                                                "name": f"{asset_conf['name']}_schedule",
+                                                "job": f"{asset_conf['name']}_job",
+                                                "cron": asset_conf["cron"],
+                                                "is_partitioned": item.partitions_def
+                                                is not None,
+                                                "partitions_def": item.partitions_def,
+                                            }
+                                        )
+                                        # We also need to ensure a job exists for this asset if it doesn't already
+                                        # The job_factory will create it if we add it to jobs_config
+                                        jobs_config.append(
+                                            {
+                                                "name": f"{asset_conf['name']}_job",
+                                                "selection": [item.key.to_user_string()],
+                                            }
                                         )
                         except Exception as e:
                             # Re-raising with filename in the message ensures visibility in the UI
@@ -116,6 +140,10 @@ class DagsterFactory:
                         s_conf["partitions_def"] = p_d
                         schedules_config.append(s_conf)
 
+                if "sensors" in config:
+                    for sensor_conf in config["sensors"]:
+                        sensors_config.append(sensor_conf)
+
                 if "resources" in config:
                     local_resources = self.resource_factory.load_resources_from_config(
                         config["resources"]
@@ -133,10 +161,16 @@ class DagsterFactory:
             schedules_config, jobs_map, asset_partitions
         )
 
+        # 5. Create Sensors
+        sensors = self.sensor_factory.create_sensors(
+            sensors_config, jobs_map, self.asset_factory
+        )
+
         return Definitions(
             assets=assets,
             asset_checks=asset_checks,
             resources=resources,
             jobs=jobs,
             schedules=schedules,
+            sensors=sensors,
         )

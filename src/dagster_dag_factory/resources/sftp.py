@@ -109,7 +109,7 @@ class SFTPResource(BaseConfigurableResource):
         path: str,
         pattern: str = None,
         recursive: bool = False,
-        check_is_modifing: bool = False,
+        check_is_modifying: bool = False,
         predicate: Callable[[FileInfo], bool] = None,
         on_each: Callable[[FileInfo, int], bool] = None,
     ) -> List[FileInfo]:
@@ -178,7 +178,7 @@ class SFTPResource(BaseConfigurableResource):
                 if regex and not regex.match(file_name):
                     continue
 
-                if check_is_modifing:
+                if check_is_modifying:
                     # Logic from snippet: (current_ts - modified_ts) < 60
                     # This assumes file is stable if it hasn't been modified in last 60s
                     # This is different from "check size change", but following user request.

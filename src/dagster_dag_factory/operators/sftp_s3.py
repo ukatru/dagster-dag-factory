@@ -91,7 +91,7 @@ class SftpS3Operator(BaseOperator):
                     path=sftp_path,
                     pattern=pattern,
                     recursive=source_config.recursive,
-                    check_is_modifing=source_config.check_is_modifying,
+                    check_is_modifying=source_config.check_is_modifying,
                     predicate=predicate_fn,
                     on_each=on_each_file
                 )

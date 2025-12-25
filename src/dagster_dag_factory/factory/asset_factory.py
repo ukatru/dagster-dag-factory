@@ -125,9 +125,10 @@ class AssetFactory:
             # Fallback for ad-hoc or non-partitioned runs to prevent NameError in macros
             template_vars["partition_key"] = None
 
-        # Add vars and env
+        # Add vars, env, and run_tags
         template_vars["vars"] = Dynamic(self.env_vars)
         template_vars["env"] = EnvVarAccessor()
+        template_vars["run_tags"] = Dynamic(context.run.tags) if hasattr(context, "run") else {}
         template_vars.update(get_macros(context))
 
         return template_vars
@@ -250,6 +251,8 @@ class AssetFactory:
         source_type = source.get("type")
         target_type = target.get("type")
 
+        assets = []
+
         # Dynamic Operator Lookup
         operator_class = OperatorRegistry.get_operator(source_type, target_type)
 
@@ -284,8 +287,13 @@ class AssetFactory:
                     else None
                 )
 
-                # Render source FIRST
-                rendered_source = render_config(source_conf, template_vars)
+                # Render source configs (either nested 'configs' or flat)
+                source_payload = source_conf.get("configs", source_conf)
+                rendered_source = render_config(source_payload, template_vars)
+
+                # Ensure 'connection' is passed into the rendered config if not presence (backward compat)
+                if "connection" not in rendered_source and source_conn_name:
+                    rendered_source["connection"] = source_conn_name
 
                 # Validate source if schema exists
                 if operator.source_config_schema:
@@ -303,7 +311,12 @@ class AssetFactory:
                     source_model = dynamic_source
 
                 # Render target SECOND (now has access to source model)
-                rendered_target = render_config(target_conf, template_vars)
+                target_payload = target_conf.get("configs", target_conf)
+                rendered_target = render_config(target_payload, template_vars)
+                
+                # Ensure 'connection' is passed into the rendered config if not presence (backward compat)
+                if "connection" not in rendered_target and target_conn_name:
+                    rendered_target["connection"] = target_conn_name
 
                 # Validate target if schema exists
                 if operator.target_config_schema:
@@ -338,6 +351,7 @@ class AssetFactory:
             def _generated_asset(context: AssetExecutionContext, **kwargs):
                 source = config.get("source", {})
                 target = config.get("target", {})
+                
                 return logic(context, source, target)
 
             # Create checks using the operator instance
@@ -345,4 +359,6 @@ class AssetFactory:
                 AssetKey(name), config.get("checks", []), required_resources, operator
             )
 
-            return [asset(**asset_kwargs)(_generated_asset), *checks]
+            assets.append(asset(**asset_kwargs)(_generated_asset))
+            assets.extend(checks)
+            return assets

@@ -387,7 +387,7 @@ class S3Resource(AWSResource):
         prefix: str = "",
         pattern: str = None,
         delimiter: str = None,
-        check_is_modifing: bool = False,
+        check_is_modifying: bool = False,
         predicate: Union[str, Callable[[S3Info], bool]] = None,
         on_each: Callable[[S3Info, int], bool] = None,
     ) -> List[S3Info]:
@@ -398,7 +398,7 @@ class S3Resource(AWSResource):
         :param prefix: Key prefix
         :param pattern: Regex pattern to match keys
         :param delimiter: Delimiter for hierarchy
-        :param check_is_modifing: If True, skips objects modified in the last 60s
+        :param check_is_modifying: If True, skips objects modified in the last 60s
         :param predicate: Python expression (str) or callable for filtering
         :param on_each: Callback for each matched object. If returns False, stops listing.
         """
@@ -436,7 +436,7 @@ class S3Resource(AWSResource):
                 )
 
                 # Check if modifying (min 60s idle)
-                if check_is_modifing:
+                if check_is_modifying:
                     if (time.time() - info.modified_ts) < 60:
                         continue
 

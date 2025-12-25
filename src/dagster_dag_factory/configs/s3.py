@@ -41,7 +41,7 @@ class S3Config(BaseConfigModel):
     delimiter: Optional[str] = Field(
         default=None, description="Delimiter (fallback if not in csv_options)"
     )
-    check_is_modifing: bool = Field(
+    check_is_modifying: bool = Field(
         default=False, description="Verify if file is being modified"
     )
     predicate: Optional[str] = Field(
