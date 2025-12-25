@@ -38,10 +38,21 @@ class SnowflakeResource(BaseConfigurableResource):
     ]
 
     def _get_private_key_bytes(self):
-        if self.private_key:
-            return self.private_key.encode("utf-8")
-        if self.private_key_path:
-            with open(self.private_key_path, "rb") as key_file:
+        pk = self.resolve("private_key")
+        if pk:
+            # Handle Base64 encoded private keys (consistent with SFTP)
+            from dagster_dag_factory.utils.base64 import from_b64_str
+            try:
+                # Attempt to decode from b64 if it looks like it
+                pk_str = from_b64_str(pk)
+                return pk_str.encode("utf-8")
+            except Exception:
+                # If not b64, assume it's raw PEM
+                return pk.encode("utf-8")
+
+        pk_path = self.resolve("private_key_path")
+        if pk_path:
+            with open(pk_path, "rb") as key_file:
                 return key_file.read()
         return None
 

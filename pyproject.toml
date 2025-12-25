@@ -20,8 +20,12 @@ dependencies = [
     "pydantic>=2.7.0",
     "cryptography>=42.0.0",
     "pendulum>=3.0.0",
-    "psycopg2-binary>=2.9.0"
+    "psycopg2-binary>=2.9.0",
+    "click>=8.1.0"
 ]
+
+[project.scripts]
+dag-factory = "dagster_dag_factory.cli:cli"
 
 [tool.setuptools]
 packages = ["dagster_dag_factory"]
