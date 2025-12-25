@@ -17,6 +17,10 @@ class BaseConfigModel(BaseModel):
         extra="allow", populate_by_name=True, arbitrary_types_allowed=True
     )
 
+    # Whitelist of fields allowed to be rendered as Jinja templates.
+    # If empty, no fields will be rendered.
+    template_fields: ClassVar[List[str]] = []
+
     # Sensible defaults for sensitive fields to mask in logs
     mask_fields: ClassVar[List[str]] = ["password", "secret", "token", "token_file"]
 

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, ClassVar
 from pydantic import Field
 from dagster_dag_factory.configs.base import BaseConfigModel
 from dagster_dag_factory.configs.enums import CsvQuoting
@@ -6,6 +6,13 @@ from dagster_dag_factory.configs.enums import CsvQuoting
 
 class CsvConfig(BaseConfigModel):
     """Configuration for CSV file processing."""
+
+    template_fields: ClassVar[List[str]] = [
+        "delimiter",
+        "lineterminator",
+        "escapechar",
+        "quotechar",
+    ]
 
     delimiter: str = Field(default=",", description="The field delimiter")
     quoting: CsvQuoting = Field(

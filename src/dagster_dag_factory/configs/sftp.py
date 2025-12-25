@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, ClassVar
 from pydantic import Field
 from dagster_dag_factory.configs.base import BaseConfigModel
 from dagster_dag_factory.configs.compression import CompressConfig
@@ -8,6 +8,15 @@ class SFTPConfig(BaseConfigModel):
     """Configuration for SFTP as a source."""
 
     connection: str = Field(description="Name of the SFTP resource")
+
+    template_fields: ClassVar[List[str]] = [
+        "path",
+        "pattern",
+        "file_name",
+        "predicate",
+        "compress_options",
+    ]
+
     path: str = Field(description="Remote directory or file path")
     pattern: Optional[str] = Field(
         default=".*", description="Regex pattern to match files"

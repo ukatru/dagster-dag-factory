@@ -61,12 +61,19 @@ Available everywhere in your YAML (Assets, Jobs, Sensors):
 
 | Variable | Source | Description |
 | :--- | :--- | :--- |
-| `{{ env.VAR_NAME }}` | Environment | Access system environment variables (e.g. `env.AWS_REGION`). |
+| `{{ env.VAR_NAME }}` | Environment | Access system environment variables. |
 | `{{ vars.my_val }}` | `vars.yaml` | Access global project-level variables. |
-| `{{ run_tags["key"] }}` | Runtime | Access metadata from the current run (e.g. `factory/source_item`). |
+| `{{ source.item.xxx }}` | Discovery | **Primary variable.** Access metadata for the current file (works for Sensors AND Bulk). |
 | `{{ partition_key }}` | Partitions | The current partition ID (e.g. `2023-12-25`). |
 | `{{ partition_start }}` | Partitions | ISO start of the partition window. |
 | `{{ partition_end }}` | Partitions | ISO end of the partition window. |
+
+> [!TIP]
+> **Unified Metadata**: You no longer need to use `run_tags` to get sensor results! Simply use `{{ source.item.key }}` or `{{ source.item.file_name }}` and the factory will resolve it automatically via the Operator.
+
+---
+
+---
 
 ### 🏗️ Template Fields (Whitelist)
 To ensure safety and performance, **not all fields support Jinja templates**. Only designated "Template Fields" are evaluated. For others, curly braces `{{ }}` are treated as literal text.

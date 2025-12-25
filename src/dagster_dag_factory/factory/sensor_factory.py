@@ -104,8 +104,13 @@ class SensorFactory:
                         "dagster/priority": "10",
                         "factory/sensor": name,
                         "factory/source_item": item_name,
-                        "factory/source_mtime": str(item_mtime)
+                        "factory/source_mtime": str(item_mtime),
                     }
+
+                    # Unified Metadata Pattern: Pass the full serialized model
+                    if hasattr(item, "to_dict"):
+                        import json
+                        tags["factory/source_metadata"] = json.dumps(item.to_dict())
                     
                     yield RunRequest(
                         run_key=run_key,

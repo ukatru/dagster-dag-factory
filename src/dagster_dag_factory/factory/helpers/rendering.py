@@ -9,14 +9,33 @@ T = TypeVar("T", bound=BaseModel)
 
 def render_config_model(model: T, template_vars: Dict[str, Any]) -> T:
     """
-    Renders an existing Pydantic model by converting to dict, rendering,
-    and re-instantiating. Useful for runtime overrides (e.g., inside a loop).
+    Renders a Pydantic model by honoring its 'template_fields' whitelist.
+    Recursively renders nested models if they are also whitelisted.
     """
+    from dagster_dag_factory.configs.base import BaseConfigModel
+
     # Convert to dict, including extras
     model_dict = model.model_dump()
-    rendered_dict = render_config(model_dict, template_vars)
+    template_fields = getattr(model, "template_fields", [])
+
+    for field_name in template_fields:
+        if field_name not in model_dict:
+            continue
+
+        val = model_dict[field_name]
+        
+        # Determine if we should recurse
+        # Note: model_dump already converted child models to dicts.
+        # We need to check the original model's attribute type to see if it was a config model.
+        original_attr = getattr(model, field_name, None)
+
+        if isinstance(original_attr, BaseConfigModel):
+            model_dict[field_name] = render_config_model(original_attr, template_vars)
+        elif isinstance(val, (str, dict, list)):
+            model_dict[field_name] = render_config(val, template_vars)
+
     # Re-instantiate as the same type
-    return type(model)(**rendered_dict)
+    return type(model)(**model_dict)
 
 
 # Create a Jinja2 environment for rendering

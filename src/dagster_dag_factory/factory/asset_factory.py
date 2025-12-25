@@ -271,6 +271,15 @@ class AssetFactory:
             def logic(context, source_conf, target_conf, operator=operator):
                 template_vars = self._get_template_vars(context)
 
+                # Unified Metadata Pattern: Deserialize rich metadata from sensor if present 
+                metadata_json = template_vars.get("run_tags", {}).get("factory/source_metadata")
+                if metadata_json:
+                    import json
+                    from dagster_dag_factory.factory.helpers.dynamic import Dynamic
+                    template_vars["source"] = {
+                        "item": Dynamic(json.loads(metadata_json))
+                    }
+
                 # Resolve Resources for injection (Dagster style)
                 # We extract the 'connection' string from the raw config before validation
                 source_conn_name = source_conf.get("connection")

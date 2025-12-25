@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Dict, ClassVar
 from enum import Enum
 from pydantic import Field
 from dagster_dag_factory.configs.base import BaseConfigModel
@@ -13,6 +13,8 @@ class ParquetCompression(str, Enum):
 
 class ParquetConfig(BaseConfigModel):
     """Configuration for Parquet file processing."""
+
+    template_fields: ClassVar[List[str]] = []
 
     col_names: List[str] = Field(
         default_factory=list, description="Explicit column names"

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, ClassVar
 from pydantic import Field
 from dagster_dag_factory.configs.base import BaseConfigModel
 from dagster_dag_factory.configs.compression import CompressConfig
@@ -15,6 +15,19 @@ class S3Config(BaseConfigModel):
     """
 
     connection: str = Field(description="Name of the S3 resource")
+
+    template_fields: ClassVar[List[str]] = [
+        "bucket_name",
+        "key",
+        "region",
+        "prefix",
+        "pattern",
+        "predicate",
+        "compress_options",
+        "csv_options",
+        "parquet_options",
+        "json_options",
+    ]
 
     bucket_name: str = Field(description="The name of the S3 bucket")
     key: Optional[str] = Field(default=None, description="S3 Key/Path")

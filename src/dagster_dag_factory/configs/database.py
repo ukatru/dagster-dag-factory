@@ -1,10 +1,12 @@
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, ClassVar
 from pydantic import Field
 from dagster_dag_factory.configs.base import BaseConfigModel
 
 
 class SqlConfig(BaseConfigModel):
     """Configuration for executing a raw SQL query."""
+
+    template_fields: ClassVar[List[str]] = ["sql"]
 
     sql: Optional[str] = Field(None, description="The SQL query to execute")
     params: Optional[Dict[str, Any]] = Field(
@@ -14,6 +16,8 @@ class SqlConfig(BaseConfigModel):
 
 class TableConfig(BaseConfigModel):
     """Configuration for operating on a database table."""
+
+    template_fields: ClassVar[List[str]] = ["table_name", "schema_name"]
 
     table_name: Optional[str] = Field(None, description="The table name")
     schema_name: Optional[str] = Field(
@@ -29,6 +33,11 @@ class DatabaseConfig(SqlConfig, TableConfig):
     Standardized database configuration that inherits SQL and Table fields.
     Standardizes the lifecycle: sql_pre -> main operation -> sql_post.
     """
+
+    template_fields: ClassVar[List[str]] = SqlConfig.template_fields + TableConfig.template_fields + [
+        "sql_pre",
+        "sql_post",
+    ]
 
     rows_chunk: Optional[int] = Field(
         default=10000, description="Chunk size for reading/writing rows"
