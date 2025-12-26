@@ -35,6 +35,7 @@ from dagster_dag_factory.factory.helpers.dagster_helpers import (
     get_freshness_policy,
     get_retry_policy,
 )
+from dagster_dag_factory.configs.enums import DagsterKind, OPRN_TYPE_TO_KIND, OperationType
 
 
 class AssetFactory:
@@ -248,6 +249,27 @@ class AssetFactory:
             "retry_policy": retry_policy,
             "pool": pool,
         }
+        
+        # Asset Kinds (UI Icons)
+        # We automatically infer the technology kinds from the source and target types
+        # using the centralized OPRN_TYPE_TO_KIND mapping.
+        source_type_str = source.get("type", "").upper()
+        target_type_str = target.get("type", "").upper()
+        
+        kinds = set()
+        for type_str in [source_type_str, target_type_str]:
+            if type_str:
+                # Look up the kind from the centralized mapping
+                kind_value = OPRN_TYPE_TO_KIND.get(type_str)
+                if kind_value:
+                    # Handle both enum objects and plain strings
+                    if hasattr(kind_value, 'value'):
+                        kinds.add(kind_value.value)
+                    else:
+                        kinds.add(kind_value)
+        # Add python kind (extract string value from enum)
+        kinds.add(DagsterKind.PYTHON.value)
+        asset_kwargs["kinds"] = kinds
         if backfill_policy:
             asset_kwargs["backfill_policy"] = backfill_policy
         if automation_policy:
