@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict, Any, Union, ClassVar
-from pydantic import Field
+from pydantic import Field, model_validator
 from dagster_dag_factory.configs.base import BaseConfigModel
 
 
@@ -12,6 +12,14 @@ class SqlConfig(BaseConfigModel):
     params: Optional[Dict[str, Any]] = Field(
         None, description="Parameters for the SQL query"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def handle_raw_string(cls, data: Any) -> Any:
+        """Allows initializing SqlConfig from a raw string (YAML shorthand)."""
+        if isinstance(data, str):
+            return {"sql": data}
+        return data
 
 
 class TableConfig(BaseConfigModel):
@@ -42,10 +50,10 @@ class DatabaseConfig(SqlConfig, TableConfig):
     rows_chunk: Optional[int] = Field(
         default=10000, description="Chunk size for reading/writing rows"
     )
-    sql_pre: List[Union[str, SqlConfig]] = Field(
+    sql_pre: List[SqlConfig] = Field(
         default_factory=list,
         description="SQL commands to run before the main operation",
     )
-    sql_post: List[Union[str, SqlConfig]] = Field(
+    sql_post: List[SqlConfig] = Field(
         default_factory=list, description="SQL commands to run after the main operation"
     )

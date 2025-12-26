@@ -193,8 +193,10 @@ class DagsterFactory:
                 # Catch all errors at file level and log them once
                 if show_logs:
                     log_action("LOAD_FAILED", file=yaml_file.name, error=str(e))
-                # Re-raise with filename for Dagster UI visibility
-                raise type(e)(f"Critical failure loading {yaml_file.name}: {e}") from e
+                # Re-raise with filename context. We avoid calling type(e) directly 
+                # because some exceptions (like DagsterInvalidPythonicConfigDefinitionError)
+                # require specific arguments in __init__.
+                raise RuntimeError(f"Critical failure loading {yaml_file.name}: {e}") from e
 
         # 3. Create Jobs
         jobs = self.job_factory.create_jobs(jobs_config, asset_partitions)

@@ -1,9 +1,10 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import ConfigDict
+from dagster import Config
 from typing import Any, List, ClassVar
 import json
 
 
-class BaseConfigModel(BaseModel):
+class BaseConfigModel(Config):
     """
     Base Pydantic model for configurations with automated masking for logging.
     """
@@ -14,7 +15,10 @@ class BaseConfigModel(BaseModel):
         return val.get_value() if hasattr(val, "get_value") else val
 
     model_config = ConfigDict(
-        extra="allow", populate_by_name=True, arbitrary_types_allowed=True
+        extra="allow", 
+        populate_by_name=True, 
+        arbitrary_types_allowed=True,
+        frozen=False
     )
 
     # Whitelist of fields allowed to be rendered as Jinja templates.

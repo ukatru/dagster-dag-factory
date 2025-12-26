@@ -6,10 +6,12 @@ from dagster import (
     AssetIn,
     SourceAsset,
     AssetKey,
+    Config,
 )
 import yaml
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Type
+from pydantic import create_model
 from dagster_dag_factory.factory.registry import OperatorRegistry
 
 # Import operators package to start registration
@@ -169,54 +171,54 @@ class AssetFactory:
 
         return checks
 
-    def _create_asset(self, config):
-        name = config["name"]
-        group = config.get("group", "default")
-        description = config.get("description")
+    def _create_asset(self, asset_conf):
+        name = asset_conf["name"]
+        group = asset_conf.get("group", "default")
+        description = asset_conf.get("description")
 
-        source = config.get("source", {})
-        target = config.get("target", {})
-        deps = config.get("deps", [])
+        source = asset_conf.get("source", {})
+        target = asset_conf.get("target", {})
+        deps = asset_conf.get("deps", [])
 
         # Metadata and Tags
         # We use .copy() or similar to avoid circular references when injecting back into metadata
-        metadata = config.get("metadata", {}).copy()
-        tags = config.get("tags") or {}
+        metadata = asset_conf.get("metadata", {}).copy()
+        tags = asset_conf.get("tags") or {}
 
         # UI Visualization: Use JSON metadata (ignored by Plots tab, clean explorer)
         from dagster import MetadataValue
         # Create a clean version of the config for the UI to avoid circularity
-        ui_config = {k: v for k, v in config.items() if k != "metadata"}
+        ui_config = {k: v for k, v in asset_conf.items() if k != "metadata"}
         metadata["Factory Config"] = MetadataValue.json(ui_config)
 
         # Concurrency support
-        pool = config.get("concurrency_key")
+        pool = asset_conf.get("concurrency_key")
 
         # Partition Support
         partitions_def = PartitionFactory.get_partitions_def(
-            config.get("partitions_def")
+            asset_conf.get("partitions_def")
         )
 
         # Backfill Policy
-        backfill_policy = get_backfill_policy(config.get("backfill_policy"))
+        backfill_policy = get_backfill_policy(asset_conf.get("backfill_policy"))
 
         # Automation Policy
-        automation_policy = get_automation_policy(config.get("automation_policy"))
+        automation_policy = get_automation_policy(asset_conf.get("automation_policy"))
 
         # Freshness Policy
-        freshness_policy = get_freshness_policy(config.get("freshness_policy"))
+        freshness_policy = get_freshness_policy(asset_conf.get("freshness_policy"))
 
         # Auto-Materialize Policy
         auto_materialize_policy = get_auto_materialize_policy(
-            config.get("auto_materialize_policy")
+            asset_conf.get("auto_materialize_policy")
         )
 
         # Retry Policy
-        retry_policy = get_retry_policy(config.get("retry_policy"))
+        retry_policy = get_retry_policy(asset_conf.get("retry_policy"))
 
         # Input dependencies with Partition Mappings
         ins = {}
-        ins_config = config.get("ins", {})
+        ins_config = asset_conf.get("ins", {})
         for dep_name, dep_conf in ins_config.items():
             partition_mapping = get_partition_mapping(dep_conf.get("partition_mapping"))
             ins[dep_name] = AssetIn(partition_mapping=partition_mapping)
@@ -308,10 +310,33 @@ class AssetFactory:
                     )
 
 
-            def logic(context, source_conf, target_conf, max_workers, operator=operator):
+
+            # Generate dynamic config class for this asset (Option B V2)
+            # We use pydantic.create_model to ensure the class is correctly initialized
+            # with all metadata needed for Dagster's inspection engine.
+            class_name = f"{name}_config".replace("-", "_")
+            model_fields = {}
+            
+            if operator.source_config_schema:
+                model_fields["source"] = (Optional[operator.source_config_schema], None)
+            
+            if operator.target_config_schema:
+                model_fields["target"] = (Optional[operator.target_config_schema], None)
+            
+            model_fields["max_workers"] = (Optional[int], None)
+            
+            DynamicConfig = create_model(
+                class_name,
+                **model_fields,
+                __base__=Config,
+                __module__=__name__
+            )
+
+
+            def logic(context, source_conf, target_conf, max_workers, runtime_config: Config, operator=operator):
                 template_vars = self._get_template_vars(context)
 
-                # Unified Metadata Pattern: Deserialize rich metadata from sensor if present 
+                # Unified Metadata Pattern
                 metadata_json = template_vars.get("run_tags", {}).get("factory/source_metadata")
                 if metadata_json:
                     import json
@@ -320,91 +345,90 @@ class AssetFactory:
                         "item": Dynamic(json.loads(metadata_json))
                     }
 
-                # Resolve Resources for injection (Dagster style)
-                # We extract the 'connection' string from the raw config before validation
+                # Resolve Resources
                 source_conn_name = source_conf.get("connection")
                 target_conn_name = target_conf.get("connection")
 
-                source_res = (
-                    getattr(context.resources, source_conn_name)
-                    if source_conn_name
-                    else None
-                )
-                target_res = (
-                    getattr(context.resources, target_conn_name)
-                    if target_conn_name
-                    else None
-                )
+                source_res = getattr(context.resources, source_conn_name) if source_conn_name else None
+                target_res = getattr(context.resources, target_conn_name) if target_conn_name else None
 
-                # Render source configs (either nested 'configs' or flat)
-                source_payload = source_conf.get("configs", source_conf)
+                # 1. Load static YAML config payload
+                source_payload = source_conf.get("configs", source_conf).copy()
+                target_payload = target_conf.get("configs", target_conf).copy()
+                
+                # 2. Merge Runtime Overrides (Option B) if provided in UI
+                if hasattr(runtime_config, "source") and runtime_config.source:
+                    # Merge only fields that were actually set in the UI
+                    overrides = runtime_config.source.model_dump(exclude_unset=True)
+                    source_payload.update(overrides)
+                
+                if hasattr(runtime_config, "target") and runtime_config.target:
+                    overrides = runtime_config.target.model_dump(exclude_unset=True)
+                    target_payload.update(overrides)
+
+                # Render source
                 rendered_source = render_config(source_payload, template_vars)
-
-                # Ensure 'connection' is passed into the rendered config if not presence (backward compat)
                 if "connection" not in rendered_source and source_conn_name:
                     rendered_source["connection"] = source_conn_name
 
-                # Validate source if schema exists
+                # Validate source
                 if operator.source_config_schema:
                     try:
                         source_model = operator.source_config_schema(**rendered_source)
                         template_vars["source"] = source_model
                     except Exception as e:
-                        context.log.error(
-                            f"Source configuration validation failed: {e}"
-                        )
+                        context.log.error(f"Source configuration validation failed: {e}")
                         raise
                 else:
                     dynamic_source = Dynamic(rendered_source)
                     template_vars["source"] = dynamic_source
                     source_model = dynamic_source
 
-                # Render target SECOND (now has access to source model)
-                target_payload = target_conf.get("configs", target_conf)
+                # Render target
                 rendered_target = render_config(target_payload, template_vars)
-                
-                # Ensure 'connection' is passed into the rendered config if not presence (backward compat)
                 if "connection" not in rendered_target and target_conn_name:
                     rendered_target["connection"] = target_conn_name
 
-                # Validate target if schema exists
+                # Validate target
                 if operator.target_config_schema:
                     try:
                         target_model = operator.target_config_schema(**rendered_target)
                     except Exception as e:
-                        context.log.error(
-                            f"Target configuration validation failed: {e}"
-                        )
+                        context.log.error(f"Target configuration validation failed: {e}")
                         raise
                 else:
                     target_model = rendered_target
+
+                # Use Runtime max_workers if provided
+                final_max_workers = (runtime_config.max_workers 
+                                     if hasattr(runtime_config, "max_workers") and runtime_config.max_workers 
+                                     else max_workers)
 
                 results = operator.execute(
                     context=context,
                     source_config=source_model,
                     target_config=target_model,
                     template_vars=template_vars,
-                    max_workers=max_workers,
+                    max_workers=final_max_workers,
                     source_resource=source_res,
                     target_resource=target_res,
                 )
 
-                # Automatically harvest observations as Dagster Metadata
                 if results and isinstance(results, dict) and "observations" in results:
                     context.add_output_metadata(results["observations"])
 
                 return None
 
-            def _generated_asset(context: AssetExecutionContext, **kwargs):
-                source = config.get("source", {})
-                target = config.get("target", {})
-                max_workers = config.get("max_workers", 5)
+            def _generated_asset(context: AssetExecutionContext, config: DynamicConfig):
+                source = asset_conf.get("source", {})
+                target = asset_conf.get("target", {})
+                max_workers = asset_conf.get("max_workers", 5)
                 
-                return logic(context, source, target, max_workers)
+                return logic(context, source, target, max_workers, config)
 
             # Create checks using the operator instance
             checks = self._create_checks(
-                AssetKey(name), config.get("checks", []), required_resources, operator
+                AssetKey(name), asset_conf.get("checks", []), required_resources, operator
             )
 
             assets.append(asset(**asset_kwargs)(_generated_asset))
