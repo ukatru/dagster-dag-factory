@@ -47,15 +47,35 @@ class BaseOperator(ABC):
         Returns:
             Dict containing execution results and statistics
         """
-        # 1. Pre-execution
+        import time
+        from dagster_dag_factory.factory.utils.logging import log_header, log_marker
+        
+        # Determine asset name for logging
+        asset_name = context.asset_key.to_user_string() if hasattr(context, "asset_key") else "unknown_asset"
+
+        # 1. Log Operator Header & Configs (Grouped)
+        log_block = []
+        log_block.append(log_header(f"OPERATOR | {self.__class__.__name__} ({asset_name})", logger=None))
+        log_block.append(self.log_operator_configs(context, source_config, target_config, logger=None))
+        log_block.append(log_marker("mini", logger=None))
+        
+        # Log as a single cohesive unit in Dagster UI
+        context.log.info("\n" + "\n".join(log_block))
+
+        start_time = time.time()
+        
+        # 2. Pre-execution
         self.pre_execute(context, source_config, target_config, **kwargs)
         
-        # 2. Main execution (operator-specific)
+        # 3. Main execution (operator-specific)
         result = self._execute(context, source_config, target_config, template_vars, **kwargs)
         
-        # 3. Post-execution
-        self.post_execute(context, result)
+        # 4. Post-execution
+        duration = time.time() - start_time
+        self.post_execute(context, result, duration=duration)
         
+        log_marker("strong")
+
         return result
     
     def pre_execute(
@@ -111,30 +131,60 @@ class BaseOperator(ABC):
     def post_execute(
         self,
         context,
-        result: Dict[str, Any]
+        result: Dict[str, Any],
+        duration: float = 0.0
     ) -> None:
         """
         Post-execution hook for cleanup and stats.
-        
-        Override this method to add operator-specific cleanup logic:
-        - Close connections
-        - Generate statistics
-        - Log results
-        
-        Args:
-            context: Dagster context
-            result: Execution results from _execute()
         """
-        pass
+        from dagster_dag_factory.factory.utils.logging import log_action, convert_size, convert_speed
+        
+        # Extract stats from result
+        stats = result.get("stats", {}) if result else {}
+        
+        # Standard transfer metrics
+        files = stats.get("files_transferred")
+        rows = stats.get("rows_processed")
+        size_bytes = stats.get("total_bytes", 0)
+        
+        # Build the stats line
+        log_kv = {}
+        if files is not None:
+             log_kv["files"] = files
+        if rows is not None:
+             log_kv["rows"] = rows
+             
+        log_kv.update({
+            "size": convert_size(size_bytes),
+            "duration": f"{round(duration, 2)}s",
+            "speed": convert_speed(size_bytes, duration)
+        })
+        
+        log_action("TRANSFER_STATS", logger=context.log, **log_kv)
     
-    def log_configs(self, context, source_config, target_config):
+    def log_operator_configs(self, context, source_config, target_config, logger=None):
         """
         Log configurations for troubleshooting.
-        
-        This method is called by the factory before execute().
-        Default implementation does nothing - override if needed.
         """
-        pass
+        from dagster_dag_factory.factory.utils.logging import log_action
+        
+        def _get_masked_summary(config):
+            if hasattr(config, "to_masked_dict"):
+                data = config.to_masked_dict()
+            elif hasattr(config, "model_dump"):
+                data = config.model_dump()
+            else:
+                data = str(config)
+                
+            if isinstance(data, dict):
+                # Only log top-level fields for the summary table
+                return " | ".join([f"{k}: {v}" for k, v in data.items() if v is not None])
+            return data
+
+        lines = []
+        lines.append(log_action("SOURCE_CONFIG", summary=_get_masked_summary(source_config), logger=logger))
+        lines.append(log_action("TARGET_CONFIG", summary=_get_masked_summary(target_config), logger=logger))
+        return "\n".join(lines)
     
     def execute_check(self, context, config: dict):
         """

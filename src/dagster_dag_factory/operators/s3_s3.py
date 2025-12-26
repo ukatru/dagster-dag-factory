@@ -105,4 +105,10 @@ class S3ToS3Operator(BaseOperator):
             logger=context.log
         )
 
+        # Add structured stats for BaseOperator reporting
+        result["stats"] = {
+            "files_transferred": result["summary"].get("source_items_count"),
+            "total_bytes": result["summary"].get("total_bytes", 0),
+        }
+
         return result

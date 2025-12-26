@@ -119,12 +119,20 @@ class S3SnowflakeOperator(BaseOperator):
                 f"Loaded {rows_loaded} rows into {table} in {round(duration, 2)}s ({rows_per_sec} rows/s)."
             )
 
-            return {
+            result = {
                 "summary": summary,
                 "observations": {"rows_loaded": rows_loaded},
                 "source": f"@{stage}/{s3_path}",
                 "target": table,
             }
+            
+            # Add structured stats for BaseOperator reporting
+            result["stats"] = {
+                "rows_processed": rows_loaded,
+                "total_bytes": 0, # Bytes not easily extracted from COPY results without extra query
+            }
+            
+            return result
 
         except Exception as e:
             context.log.error(f"Copy failed: {e}")

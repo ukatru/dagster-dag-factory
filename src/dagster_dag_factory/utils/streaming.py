@@ -61,19 +61,31 @@ class Processor:
         self.item_count = 0
         self.start_time = time.time()
         
-        # Start worker threads
+        self.thread_size = thread_size
         self.threads: List[threading.Thread] = []
-        for i in range(thread_size):
+        self._workers_started = False
+    
+    def _start_workers(self):
+        """Lazily start worker threads."""
+        if self._workers_started or self.thread_size <= 0:
+            return
+        
+        if self.logger:
+            self.logger.info(f"Starting {self.thread_size} parallel worker(s) for {self.name}")
+            
+        for i in range(self.thread_size):
             thread = threading.Thread(
                 target=self._worker,
-                name=f"{name}-Worker-{i+1}",
+                name=f"{self.name}-Worker-{i+1}",
                 daemon=True
             )
             thread.start()
             self.threads.append(thread)
-    
+        self._workers_started = True
+
     def put(self, item: ProcessorItem):
         """Add item to processing queue"""
+        self._start_workers() # Start workers on first put
         self.queue.put(item)
         self.item_count += 1
     

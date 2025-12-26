@@ -372,9 +372,6 @@ class AssetFactory:
                 else:
                     target_model = rendered_target
 
-                # Log configurations for troubleshooting
-                operator.log_configs(context, source_model, target_model)
-
                 results = operator.execute(
                     context=context,
                     source_config=source_model,

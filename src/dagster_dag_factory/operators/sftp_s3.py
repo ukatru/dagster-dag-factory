@@ -144,8 +144,7 @@ class SftpS3Operator(BaseOperator):
                     raise e
         
         # Execute using universal streaming utility
-        # Start max_workers upfront for pipelined processing
-        context.log.info(f"Starting {num_workers} parallel worker(s) for SFTP transfer")
+        # Execute using universal streaming utility
         result = execute_streaming(
             producer_callback=producer,
             worker_callback=worker,
@@ -153,8 +152,13 @@ class SftpS3Operator(BaseOperator):
             logger=context.log
         )
         
+        # Add structured stats for BaseOperator reporting
+        result["stats"] = {
+            "files_transferred": result["summary"].get("source_items_count"),
+            "total_bytes": result["summary"].get("total_bytes", 0),
+        }
+        
         # Add observations for data quality checks
-        # Use source_items_count for file counts (not total_files which includes parts)
         result["observations"] = {
             "files_scanned": result["summary"].get("source_items_count", result["summary"]["total_files"]),
             "files_uploaded": result["summary"].get("source_items_count", result["summary"]["total_files"]),

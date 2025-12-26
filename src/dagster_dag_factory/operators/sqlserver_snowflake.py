@@ -104,7 +104,15 @@ class SqlServerSnowflakeOperator(BaseOperator):
             "target_table": target_config.table_name,
         }
 
-        return {"summary": summary, "observations": {"rows_transferred": total_rows}}
+        result = {"summary": summary, "observations": {"rows_transferred": total_rows}}
+        
+        # Add structured stats for BaseOperator reporting
+        result["stats"] = {
+            "rows_processed": total_rows,
+            "total_bytes": 0, # Bytes not easily tracked in direct bulk insert
+        }
+        
+        return result
 
     def _execute_write(
         self,

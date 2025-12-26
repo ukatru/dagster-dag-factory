@@ -166,9 +166,21 @@ class SqlServerS3Operator(BaseOperator):
             "mode": "streaming_v2"
         }
         
-        return {
+        # Add structured stats for BaseOperator reporting
+        result = {
             "summary": summary,
             "observations": {"rows_extracted": total_rows, "rows_written": total_rows},
             "source": "SQLSERVER",
             "target": "S3",
         }
+        
+        # Calculate total bytes from smart buffer results
+        total_bytes = sum(f.get("size", 0) for f in transferred_files)
+        
+        result["stats"] = {
+            "rows_processed": total_rows,
+            "total_bytes": total_bytes,
+            "files_transferred": len(transferred_files)
+        }
+        
+        return result
