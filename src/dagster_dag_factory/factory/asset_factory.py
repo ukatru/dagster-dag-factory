@@ -179,8 +179,15 @@ class AssetFactory:
         deps = config.get("deps", [])
 
         # Metadata and Tags
-        metadata = config.get("metadata")
+        # We use .copy() or similar to avoid circular references when injecting back into metadata
+        metadata = config.get("metadata", {}).copy()
         tags = config.get("tags") or {}
+
+        # UI Visualization: Use JSON metadata (ignored by Plots tab, clean explorer)
+        from dagster import MetadataValue
+        # Create a clean version of the config for the UI to avoid circularity
+        ui_config = {k: v for k, v in config.items() if k != "metadata"}
+        metadata["Factory Config"] = MetadataValue.json(ui_config)
 
         # Concurrency support
         pool = config.get("concurrency_key")
