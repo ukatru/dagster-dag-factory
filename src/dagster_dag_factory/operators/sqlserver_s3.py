@@ -124,6 +124,15 @@ class SqlServerS3Operator(BaseOperator):
                 state["total_rows"] += len(rows)
                 state["first_chunk"] = False
                 
+                # Count-based Milestone Logging (every 10 parts)
+                if index % 10 == 0 and index > 0:
+                    from dagster_dag_factory.factory.utils.logging import convert_size
+                    context.log.info(
+                        f"Database Extraction Progress: Part {index} processed | "
+                        f"Rows: {state['total_rows']} | "
+                        f"Size: {convert_size(state['smart_buffer']._uploaded_bytes if hasattr(state['smart_buffer'], '_uploaded_bytes') else 0)}"
+                    )
+                
                 # Self-feeding: Queue next fetch
                 processor.put(ProcessorItem(name=f'fetch[{index+1}]', data=index+1))
                 

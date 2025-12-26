@@ -301,7 +301,7 @@ class AssetFactory:
                     )
 
 
-            def logic(context, source_conf, target_conf, operator=operator):
+            def logic(context, source_conf, target_conf, max_workers, operator=operator):
                 template_vars = self._get_template_vars(context)
 
                 # Unified Metadata Pattern: Deserialize rich metadata from sensor if present 
@@ -377,6 +377,7 @@ class AssetFactory:
                     source_config=source_model,
                     target_config=target_model,
                     template_vars=template_vars,
+                    max_workers=max_workers,
                     source_resource=source_res,
                     target_resource=target_res,
                 )
@@ -390,8 +391,9 @@ class AssetFactory:
             def _generated_asset(context: AssetExecutionContext, **kwargs):
                 source = config.get("source", {})
                 target = config.get("target", {})
+                max_workers = config.get("max_workers", 5)
                 
-                return logic(context, source, target)
+                return logic(context, source, target, max_workers)
 
             # Create checks using the operator instance
             checks = self._create_checks(

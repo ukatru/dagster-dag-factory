@@ -41,6 +41,7 @@ class SafeSplitBuffer:
         compress_options: Optional[CompressConfig] = None,
         logger: Any = None,
         max_workers: int = 5,
+        total_size: Optional[int] = None,
     ):
         self.s3_resource = s3_resource
         self.bucket_name = bucket_name
@@ -49,12 +50,15 @@ class SafeSplitBuffer:
         self.chunk_size = min_size * 1024 * 1024
         self.compress_options = compress_options
         self.logger = logger
+        self.total_size = total_size
 
         # State
         self.buffer = b""
         self.header = b""
         self.part_num = 1
         self.transferred_files = []
+        self._uploaded_bytes = 0
+        self._last_logged_pct = 0
 
         # Threading
         import concurrent.futures
@@ -100,8 +104,8 @@ class SafeSplitBuffer:
             return
 
         if self.logger and len(self.buffer) == 0:
-            # Log first write to show data is flowing
-            self.logger.info(f"Smart buffer receiving data ({len(data)} bytes)...")
+            # Log first write to show data is flowing at DEBUG level
+            self.logger.debug(f"Smart buffer receiving data ({len(data)} bytes)...")
 
         self.buffer += data
 
@@ -141,7 +145,7 @@ class SafeSplitBuffer:
             if first_newline != -1:
                 self.header = data[: first_newline + 1]
                 if self.logger:
-                    self.logger.info(f"Detected header: {self.header.strip()}")
+                    self.logger.debug(f"Detected header: {self.header.strip()}")
 
         # Prepend header if in multi_file mode (where each part is a new file)
         # For multipart single-file, the header is already in the stream from part 1.
@@ -184,15 +188,15 @@ class SafeSplitBuffer:
             # Upload
             if self.multi_file:
                 if self.logger:
-                    self.logger.info(f"[{final_key}] Uploading part {part_num} ({len(final_data) / (1024*1024):.2f} MB)")
+                    self.logger.debug(f"[{final_key}] Uploading part {part_num} ({len(final_data) / (1024*1024):.2f} MB)")
                 self.s3_client.put_object(
                     Bucket=self.bucket_name, Key=final_key, Body=final_data
                 )
                 if self.logger:
-                    self.logger.info(f"[{final_key}] Completed upload of part {part_num}")
+                    self.logger.debug(f"[{final_key}] Completed upload of part {part_num}")
             else:
                 if self.logger:
-                    self.logger.info(f"[{self.key}] Uploading part {part_num} ({len(final_data) / (1024*1024):.2f} MB)")
+                    self.logger.debug(f"[{self.key}] Uploading part {part_num} ({len(final_data) / (1024*1024):.2f} MB)")
                 resp = self.s3_client.upload_part(
                     Bucket=self.bucket_name,
                     Key=self.key,
@@ -203,12 +207,30 @@ class SafeSplitBuffer:
                 with self.lock:
                     self.etags.append({"PartNumber": part_num, "ETag": resp["ETag"]})
                 if self.logger:
-                    self.logger.info(f"[{self.key}] Completed upload of part {part_num}")
+                    self.logger.debug(f"[{self.key}] Completed upload of part {part_num}")
 
             with self.lock:
                 self.transferred_files.append(
                     {"target": final_key, "size": len(final_data), "part": part_num}
                 )
+                self._uploaded_bytes += len(data) # Use original data size for progress
+                
+                # Milestone Logging (every 10%)
+                if self.total_size and self.total_size > 0:
+                    current_pct = int((self._uploaded_bytes / self.total_size) * 100)
+                    if current_pct >= self._last_logged_pct + 10:
+                        self._last_logged_pct = (current_pct // 10) * 100 # Reset milestone
+                        # Just used as floor for int division
+                        self._last_logged_pct = (current_pct // 10) * 10
+                        
+                        est_total_parts = max(part_num, int(self.total_size / self.chunk_size))
+                        from dagster_dag_factory.factory.utils.logging import convert_size
+                        self.logger.info(
+                            f"[{self.key}] Progress: {current_pct}% | "
+                            f"Part {part_num}/{est_total_parts} | "
+                            f"{convert_size(self._uploaded_bytes)} / {convert_size(self.total_size)}"
+                        )
+
         except Exception as e:
             if self.logger:
                 self.logger.error(f"Failed to upload part {part_num}: {e}")
@@ -278,7 +300,11 @@ class SafeSplitBuffer:
                         UploadId=self.upload_id,
                     )
                     if self.logger:
-                        self.logger.info(f"Completed Multipart Upload for {self.key}")
+                        from dagster_dag_factory.factory.utils.logging import convert_size
+                        self.logger.info(
+                            f"Completed Multipart Upload for {self.key} "
+                            f"(Total Parts: {len(self.transferred_files)}, Size: {convert_size(self._uploaded_bytes)})"
+                        )
             except Exception as e:
                 if self.logger:
                     self.logger.error(f"Failed to complete multipart upload: {e}")
@@ -365,6 +391,7 @@ class S3Resource(AWSResource):
         compress_options: Optional[CompressConfig] = None,
         logger: Any = None,
         max_workers: int = 5,
+        total_size: Optional[int] = None,
     ):
         """
         Creates a SafeSplitBuffer that behaves like a file object for writing.
@@ -379,6 +406,7 @@ class S3Resource(AWSResource):
             compress_options=compress_options,
             logger=logger,
             max_workers=max_workers,
+            total_size=total_size,
         )
 
     def list_files(

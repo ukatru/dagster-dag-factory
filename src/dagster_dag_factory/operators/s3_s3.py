@@ -41,7 +41,7 @@ class S3ToS3Operator(BaseOperator):
         bucket = source_config.bucket_name
         prefix = source_config.key or source_config.prefix or ""
         pattern = source_config.pattern
-        num_workers = getattr(source_config, 'max_workers', 5)
+        num_workers = self.max_workers
 
         # Render runtime config for each file
         def render_runtime_config(item_info):

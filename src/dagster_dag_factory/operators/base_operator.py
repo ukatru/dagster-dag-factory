@@ -27,6 +27,7 @@ class BaseOperator(ABC):
         source_config,
         target_config,
         template_vars: Dict[str, Any],
+        max_workers: int = 5,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -49,6 +50,8 @@ class BaseOperator(ABC):
         """
         import time
         from dagster_dag_factory.factory.utils.logging import log_header, log_marker
+        
+        self.max_workers = max_workers
         
         # Determine asset name for logging
         asset_name = context.asset_key.to_user_string() if hasattr(context, "asset_key") else "unknown_asset"

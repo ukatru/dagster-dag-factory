@@ -57,6 +57,7 @@ class Processor:
         self.queue: queue.Queue = queue.Queue()
         self.results: List[Any] = []
         self.results_lock = threading.Lock()
+        self.lock = threading.Lock()
         self.error: Optional[Exception] = None
         self.item_count = 0
         self.start_time = time.time()
@@ -66,26 +67,26 @@ class Processor:
         self._workers_started = False
     
     def _start_workers(self):
-        """Lazily start worker threads."""
-        if self._workers_started or self.thread_size <= 0:
-            return
-        
-        if self.logger:
-            self.logger.info(f"Starting {self.thread_size} parallel worker(s) for {self.name}")
-            
-        for i in range(self.thread_size):
-            thread = threading.Thread(
-                target=self._worker,
-                name=f"{self.name}-Worker-{i+1}",
-                daemon=True
-            )
-            thread.start()
-            self.threads.append(thread)
-        self._workers_started = True
+        """Dynamic worker start-up: start one worker if needed."""
+        with self.lock:
+            # Check if we can start another worker
+            if len(self.threads) < self.thread_size:
+                worker_idx = len(self.threads) + 1
+                thread = threading.Thread(
+                    target=self._worker,
+                    name=f"{self.name}-Worker-{worker_idx}",
+                    daemon=True
+                )
+                thread.start()
+                self.threads.append(thread)
+                
+                if self.logger and not self._workers_started:
+                    self.logger.info(f"Starting parallel worker(s) for {self.name} (max: {self.thread_size})")
+                    self._workers_started = True
 
     def put(self, item: ProcessorItem):
-        """Add item to processing queue"""
-        self._start_workers() # Start workers on first put
+        """Add item to processing queue and scale workers if needed"""
+        self._start_workers() 
         self.queue.put(item)
         self.item_count += 1
     

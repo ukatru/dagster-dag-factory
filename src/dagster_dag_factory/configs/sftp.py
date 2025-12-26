@@ -38,9 +38,3 @@ class SFTPConfig(BaseConfigModel):
     compress_options: Optional[CompressConfig] = Field(
         default=None, description="Compression settings for upload"
     )
-    max_workers: int = Field(
-        default=5,
-        description="Maximum number of parallel worker threads for V2 operators (1-20)",
-        ge=1,
-        le=20
-    )

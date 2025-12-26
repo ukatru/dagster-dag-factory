@@ -53,7 +53,7 @@ class SftpS3Operator(BaseOperator):
             pattern = source_config.pattern
             
         s3_prefix = target_config.prefix or ""
-        num_workers = getattr(source_config, 'max_workers', 5)
+        num_workers = self.max_workers
         
         # Predicate function for filtering files
         predicate_fn = None
@@ -124,6 +124,7 @@ class SftpS3Operator(BaseOperator):
                     min_size=runtime_target_config.min_size,
                     compress_options=runtime_target_config.compress_options,
                     logger=context.log,
+                    total_size=file_info.file_size,
                 )
                 
                 try:
