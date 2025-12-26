@@ -185,11 +185,12 @@ class AssetFactory:
         metadata = asset_conf.get("metadata", {}).copy()
         tags = asset_conf.get("tags") or {}
 
-        # UI Visualization: Use JSON metadata (ignored by Plots tab, clean explorer)
+        # UI Visualization: Use JSON metadata
+        # Dagster's plotting engine (Chart.js) ignores JSON metadata, preventing the 'category' scale crash.
+        # This also keeps the asset description clean for the list view.
         from dagster import MetadataValue
-        # Create a clean version of the config for the UI to avoid circularity
         ui_config = {k: v for k, v in asset_conf.items() if k != "metadata"}
-        metadata["Factory Config"] = MetadataValue.json(ui_config)
+        metadata["Asset Config"] = MetadataValue.json(ui_config)
 
         # Concurrency support
         pool = asset_conf.get("concurrency_key")
