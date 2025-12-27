@@ -144,9 +144,9 @@ class SFTPResource(BaseConfigurableResource):
                         attr.filename = os.path.basename(current_path)
                     else:
                         raise
-                except Exception:
-                    # Log warning?
-                    return False
+                except Exception as e:
+                    # If we can't find the path via listdir OR stat, it truly doesn't exist
+                    raise FileNotFoundError(f"SFTP path does not exist: {current_path}") from e
 
             # If items is a single attr from stat, it might not be iterable like listdir_attr result
             if not isinstance(items, list):
