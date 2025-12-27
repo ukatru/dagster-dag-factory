@@ -6,7 +6,7 @@ import json
 class BaseConfigurableResource(ConfigurableResource):
     """
     Base resource class that supports sensitive field masking for logging.
-    Following the Niagara mask_fields pattern.
+    Following the Framework mask_fields pattern.
     """
 
     mask_fields: ClassVar[List[str]] = [

@@ -2,6 +2,7 @@ from typing import List, Any, Tuple, Optional
 from dagster_dag_factory.sensors.base_sensor import BaseSensor, SensorRegistry
 from dagster_dag_factory.resources.s3 import S3Resource, S3Info
 from dagster_dag_factory.configs.s3 import S3Config
+from dagster_dag_factory.factory.helpers.rendering import render_config
 
 
 @SensorRegistry.register("S3")
@@ -26,12 +27,18 @@ class S3Sensor(BaseSensor):
         last_mtime = float(cursor) if cursor else 0
         context.log.info(f"Checking S3 bucket: {source_config.bucket_name} with prefix: {source_config.key} (cursor: {last_mtime})")
         
+        # Prepare predicate callback for Framework-style evaluation
+        predicate_fn = None
+        if source_config.predicate_template:
+            template_vars = kwargs.get("template_vars", {})
+            predicate_fn = lambda info: self._predicate(context, source_config.predicate_template, info, template_vars)
+
         # Use existing list_files method
         infos = resource.list_files(
             bucket_name=source_config.bucket_name,
             prefix=source_config.key,
             pattern=source_config.pattern,
-            predicate=source_config.predicate,
+            predicate=predicate_fn,
             check_is_modifying=source_config.check_is_modifying
         )
         

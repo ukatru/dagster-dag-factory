@@ -10,6 +10,28 @@ class BaseSensor(ABC):
     """
     source_config_schema: Optional[Type[Any]] = None
 
+    def _predicate(self, context: Any, predicate_template: Optional[str], info: Any, template_vars: Dict[str, Any]) -> bool:
+        """
+        Standardized Framework-style predicate evaluation.
+        """
+        if not predicate_template:
+            return True
+            
+        # Standard Framework context setup
+        runtime_vars = template_vars.copy()
+        if "source" not in runtime_vars:
+            runtime_vars["source"] = {}
+        runtime_vars["source"]["item"] = info
+        
+        # Inject direct attributes for prefix-less access (user preference)
+        if hasattr(info, "to_dict"):
+            runtime_vars.update(info.to_dict())
+            
+        # render_config handles full match objects (like booleans)
+        from dagster_dag_factory.factory.helpers.rendering import render_config
+        result = render_config(predicate_template, runtime_vars)
+        return str(result) == "True"
+
     @abstractmethod
     def check(
         self, 

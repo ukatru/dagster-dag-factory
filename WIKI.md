@@ -95,14 +95,14 @@ When an operator processes a file, it provides metadata about that specific item
 | :--- | :--- | :--- |
 | `{{ source.item.file_name }}` | Filename (`sales.csv`) | `key: "raw/{{ source.item.file_name }}"` |
 | `{{ source.item.path }}` | Relative directory | `key: "{{ source.item.path }}/archive"` |
-| `{{ source.item.file_size }}` | Size in bytes | `predicate: "source.item.file_size > 0"` |
+| `file_size` | Size in bytes | `predicate: "file_size > 0"` |
 
 #### **If Source is S3 (`S3Info`)**
 | Property | Description | Example Usage |
 | :--- | :--- | :--- |
 | `{{ source.item.object_name }}`| Filename (`sales.csv`) | `key: "processed/{{ source.item.object_name }}"`|
 | `{{ source.item.key }}` | Full S3 key | `key: "backup/{{ source.item.key }}"` |
-| `{{ source.item.size }}` | Object size in bytes | `predicate: "source.item.size > 1024"` |
+| `size` | Object size in bytes | `predicate: "size > 1024"` |
 
 > [!CAUTION]
 > **Strict terminology**: Do NOT use `file_name` for S3 sources; it will not render. Use `object_name` instead.

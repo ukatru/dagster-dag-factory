@@ -3,6 +3,9 @@ from dagster import SensorDefinition, RunRequest, DefaultSensorStatus, AssetKey,
 from dagster_dag_factory.sensors.base_sensor import SensorRegistry
 from dagster_dag_factory.factory.helpers.rendering import render_config
 import logging
+import pendulum
+import json
+from dagster_dag_factory.factory.helpers.dynamic import Dynamic
 
 logger = logging.getLogger("dagster_dag_factory")
 
@@ -41,6 +44,7 @@ class SensorFactory:
         interval = config.get("minimum_interval_seconds", 30)
         status_str = config.get("default_status", "STOPPED").upper()
         source_configs = config.get("configs", {})
+        trigger_mode = config.get("trigger_mode", "item").lower() # 'item' or 'batch'
 
         # Resolve Default Status
         default_status = (
@@ -55,8 +59,19 @@ class SensorFactory:
             raise ValueError(f"No sensor logic registered for type: {source_type}")
 
         def _sensor_logic(context):
-            # 1. Render config (for env vars, etc.)
+            # Preserve initial cursor for trigger metadata
+            initial_cursor = context.cursor
+            
+            # Universal Epoch (Format: YYYY-MM-DD HH:MM:SS)
+            DEFAULT_CURSOR = "1970-01-01 00:00:00"
+            
             template_vars = asset_factory_instance._get_template_vars(context)
+            template_vars["metadata"] = Dynamic({
+                "now": pendulum.now("UTC").format("YYYY-MM-DD HH:mm:ss.SSS"),
+                "last_cursor": initial_cursor or DEFAULT_CURSOR
+            })
+            
+            # 2. Render and validate sensor config
             rendered_source = render_config(source_configs, template_vars)
 
             # Inject connection from top-level if missing (required by Config models)
@@ -79,44 +94,49 @@ class SensorFactory:
                 context=context,
                 source_config=source_model,
                 resource=resource,
-                cursor=context.cursor
+                cursor=initial_cursor
             )
-
             # 5. Handle Results
             if found_items:
                 context.log.info(f"Sensor '{name}' found {len(found_items)} items. Triggering job '{target_job_name}'.")
                 
-                # Update cursor to progress
-                if new_cursor:
-                    context.update_cursor(new_cursor)
-
-                # Yield RunRequests for each item (or batch them)
-                # For now, let's yield one run per item to enable granular retries 
-                # and item-specific run tags (e.g. filename)
                 for item in found_items:
-                    # Determine unique run key (e.g. filename + mtime)
-                    item_name = getattr(item, "key", getattr(item, "filename", "unknown"))
-                    item_mtime = getattr(item, "modified_ts", 0)
-                    run_key = f"{name}:{item_name}:{item_mtime}"
+                    # Sensor discovery data
+                    item_data = item.to_dict() if hasattr(item, "to_dict") else item
+                    
+                    # Unified Trigger Object: Always include current and last cursors
+                    trigger_obj = {
+                        "cursor": new_cursor or initial_cursor or DEFAULT_CURSOR,
+                        "last_cursor": initial_cursor or DEFAULT_CURSOR,
+                        "now": template_vars["metadata"]["now"],
+                        "data": item_data
+                    }
+
+                    # Determine unique run key
+                    item_name = getattr(item, "key", getattr(item, "id", "unknown"))
+                    run_key = f"{name}:{item_name}:{new_cursor or 'tick'}"
                     
                     # Construct tags for the run
                     tags = {
                         "dagster/priority": "10",
                         "factory/sensor": name,
-                        "factory/source_item": item_name,
-                        "factory/source_mtime": str(item_mtime),
                     }
 
-                    # Unified Metadata Pattern: Pass the full serialized model
-                    if hasattr(item, "to_dict"):
-                        import json
-                        tags["factory/source_metadata"] = json.dumps(item.to_dict())
+                    tags["factory/trigger"] = json.dumps(
+                        trigger_obj, 
+                        default=lambda x: x.isoformat() if hasattr(x, 'isoformat') else str(x)
+                    )
                     
                     yield RunRequest(
                         run_key=run_key,
                         job_name=target_job_name,
                         tags=tags
                     )
+                
+                # IMPORTANT: Update cursor state ONLY AFTER constructing trigger metadata
+                # to prevent potential state bleed in the current tick loop.
+                if new_cursor:
+                    context.update_cursor(new_cursor)
             
             return None
 

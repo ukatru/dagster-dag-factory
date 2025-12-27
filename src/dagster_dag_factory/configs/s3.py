@@ -11,7 +11,7 @@ from dagster_dag_factory.configs.enums import S3Mode, S3ObjectType
 class S3Config(BaseConfigModel):
     """
     Standardized S3 Configuration.
-    Follows the proven signature from legacy Niagara implementations.
+    Follows the proven signature from legacy Framework implementations.
     """
 
     connection: str = Field(description="Name of the S3 resource")
@@ -22,7 +22,6 @@ class S3Config(BaseConfigModel):
         "region",
         "prefix",
         "pattern",
-        "predicate",
         "compress_options",
         "csv_options",
         "parquet_options",
@@ -60,6 +59,9 @@ class S3Config(BaseConfigModel):
     predicate: Optional[str] = Field(
         default=None, description="Predicate for filtering"
     )
+    predicate_template: Optional[str] = Field(
+        default=None, description="Automatically generated Jinja template for predicate"
+    )
 
     compress_options: Optional[CompressConfig] = Field(
         default=None, description="Compression settings"
@@ -78,7 +80,10 @@ class S3Config(BaseConfigModel):
         if not self.pattern and self.key:
             self.pattern = self.key
 
-        # Ensure sub-configs are initialized if they match the object_type (Niagara pattern)
+        if self.predicate:
+            self.predicate_template = "{{ " + self.predicate + " }}"
+
+        # Ensure sub-configs are initialized if they match the object_type (Framework pattern)
         if self.object_type == S3ObjectType.CSV and not self.csv_options:
             self.csv_options = CsvConfig()
         elif self.object_type == S3ObjectType.PARQUET and not self.parquet_options:

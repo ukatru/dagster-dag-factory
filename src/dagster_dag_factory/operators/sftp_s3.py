@@ -10,8 +10,8 @@ from jinja2 import Template
 
 from dagster_dag_factory.operators.base_operator import BaseOperator
 from dagster_dag_factory.utils.streaming import ProcessorItem, execute_streaming
-from dagster_dag_factory.factory.helpers.rendering import render_config_model
 from dagster_dag_factory.factory.registry import OperatorRegistry
+from dagster_dag_factory.factory.helpers.rendering import render_config, render_config_model
 from dagster_dag_factory.configs.sftp import SFTPConfig
 from dagster_dag_factory.configs.s3 import S3Config
 
@@ -55,14 +55,10 @@ class SftpS3Operator(BaseOperator):
         s3_prefix = target_config.prefix or ""
         num_workers = self.max_workers
         
-        # Predicate function for filtering files
+        # Prepare predicate callback for Framework-style evaluation
         predicate_fn = None
-        if source_config.predicate:
-            def predicate_fn(file_info):
-                runtime_vars = {**template_vars, "source": {"item": file_info}}
-                # Predicate is a string expression, render it as a template string
-                rendered = Template(source_config.predicate).render(runtime_vars)
-                return rendered == "True"
+        if source_config.predicate_template:
+            predicate_fn = lambda info: self._predicate(context, source_config.predicate_template, info, template_vars)
         
         # Render runtime config for each file
         def render_runtime_config(file_info):

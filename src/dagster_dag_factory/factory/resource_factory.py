@@ -3,6 +3,8 @@ from typing import Dict, Any, Type, Optional
 from dagster import ConfigurableResource
 import dagster_dag_factory.resources as resources_module
 from dagster_dag_factory.factory.helpers.config_loaders import load_env_config
+from dagster_dag_factory.factory.helpers.env_accessor import EnvVarAccessor
+from dagster_dag_factory.factory.helpers.rendering import render_config
 
 
 class ResourceFactory:
@@ -52,13 +54,9 @@ class ResourceFactory:
 
         # If no template vars provided (base case), we still provide env accessor
         if template_vars is None:
-            from dagster_dag_factory.factory.helpers.env_accessor import EnvVarAccessor
-
             template_vars = {"env": EnvVarAccessor()}
 
         # Parse config using unified rendering
-        from dagster_dag_factory.factory.helpers.rendering import render_config
-
         parsed_config = render_config(res_config, template_vars)
 
         # Dynamically find the resource class

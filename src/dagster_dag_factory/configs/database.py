@@ -12,6 +12,9 @@ class SqlConfig(BaseConfigModel):
     params: Optional[Dict[str, Any]] = Field(
         None, description="Parameters for the SQL query"
     )
+    cursor_column: Optional[str] = Field(
+        None, description="Column to use for high-water mark tracking (for sensors)"
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -57,3 +60,5 @@ class DatabaseConfig(SqlConfig, TableConfig):
     sql_post: List[SqlConfig] = Field(
         default_factory=list, description="SQL commands to run after the main operation"
     )
+
+

@@ -7,7 +7,10 @@ from dagster import (
     SourceAsset,
     AssetKey,
     Config,
+    MultiPartitionKey,
+    MetadataValue,
 )
+import json
 import yaml
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Type
@@ -36,6 +39,7 @@ from dagster_dag_factory.factory.helpers.dagster_helpers import (
     get_retry_policy,
 )
 from dagster_dag_factory.configs.enums import DagsterKind, OPRN_TYPE_TO_KIND, OperationType
+from dagster_dag_factory.utils.exceptions import DagsterFactoryError
 
 
 class AssetFactory:
@@ -113,9 +117,6 @@ class AssetFactory:
             except Exception:
                 pass
 
-            # Handle Multi-dimensional keys
-            from dagster import MultiPartitionKey
-
             if isinstance(pk, MultiPartitionKey):
                 template_vars["partition_key"] = Dynamic(pk.keys_by_dimension)
                 # Also provide flat keys for backward compatibility if needed,
@@ -131,7 +132,22 @@ class AssetFactory:
         # Add vars, env, and run_tags
         template_vars["vars"] = Dynamic(self.env_vars)
         template_vars["env"] = EnvVarAccessor()
-        template_vars["run_tags"] = Dynamic(context.run.tags) if hasattr(context, "run") else {}
+        run_tags = context.run.tags if hasattr(context, "run") else {}
+        template_vars["run_tags"] = Dynamic(run_tags)
+        
+        # 🟢 Automatic Trigger Hydration
+        # If this run was triggered by a sensor, hydrate the 'trigger' object
+        trigger_tag = run_tags.get("factory/trigger")
+        if trigger_tag:
+            try:
+                parsed = json.loads(trigger_tag)
+                template_vars["trigger"] = Dynamic(parsed)
+            except Exception:
+                pass
+
+        template_vars.update(get_macros(context))
+        return template_vars
+
         template_vars.update(get_macros(context))
 
         return template_vars
@@ -186,10 +202,7 @@ class AssetFactory:
         metadata = asset_conf.get("metadata", {}).copy()
         tags = asset_conf.get("tags") or {}
 
-        # UI Visualization: Use JSON metadata
         # Dagster's plotting engine (Chart.js) ignores JSON metadata, preventing the 'category' scale crash.
-        # This also keeps the asset description clean for the list view.
-        from dagster import MetadataValue
         ui_config = {k: v for k, v in asset_conf.items() if k != "metadata"}
         metadata["Asset Config"] = MetadataValue.json(ui_config)
 
@@ -310,7 +323,6 @@ class AssetFactory:
                             source_payload[k] = v
                     operator.source_config_schema(**source_payload)
                 except Exception as e:
-                    from dagster_dag_factory.utils.exceptions import DagsterFactoryError
                     raise DagsterFactoryError(
                         message=str(e),
                         asset_name=name,
@@ -325,7 +337,6 @@ class AssetFactory:
                             target_payload[k] = v
                     operator.target_config_schema(**target_payload)
                 except Exception as e:
-                    from dagster_dag_factory.utils.exceptions import DagsterFactoryError
                     raise DagsterFactoryError(
                         message=str(e),
                         asset_name=name,
@@ -359,15 +370,6 @@ class AssetFactory:
             def logic(context, source_conf, target_conf, max_workers, runtime_config: Config, operator=operator):
                 template_vars = self._get_template_vars(context)
 
-                # Unified Metadata Pattern
-                metadata_json = template_vars.get("run_tags", {}).get("factory/source_metadata")
-                if metadata_json:
-                    import json
-                    from dagster_dag_factory.factory.helpers.dynamic import Dynamic
-                    template_vars["source"] = {
-                        "item": Dynamic(json.loads(metadata_json))
-                    }
-
                 # Resolve Resources
                 source_conn_name = source_conf.get("connection")
                 target_conn_name = target_conf.get("connection")
@@ -378,6 +380,12 @@ class AssetFactory:
                 # 1. Load static YAML config payload
                 source_payload = source_conf.get("configs", source_conf).copy()
                 target_payload = target_conf.get("configs", target_conf).copy()
+
+                # 🟢 Inject trigger (automatically hydrated from run tags)
+                if template_vars.get("trigger"):
+                    source_payload["trigger"] = template_vars["trigger"]
+                    # Also provide 'source.trigger' for YAML access during immediate rendering
+                    template_vars["source"] = Dynamic({"trigger": template_vars["trigger"]})
                 
                 # 2. Merge Runtime Overrides (Option B) if provided in UI
                 if hasattr(runtime_config, "source") and runtime_config.source:

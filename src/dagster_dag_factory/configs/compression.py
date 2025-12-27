@@ -7,7 +7,7 @@ from dagster_dag_factory.configs.enums import CompressionType, CompressionAction
 class CompressConfig(BaseConfigModel):
     """
     Configuration for file compression/decompression.
-    Adapted from Niagara legacy configs.
+    Adapted from Framework legacy configs.
     """
 
     template_fields: ClassVar[List[str]] = []

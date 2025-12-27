@@ -93,7 +93,7 @@ class TestVariableRendering(unittest.TestCase):
             modified_ts=1671234567.0
         )
         
-        # Verify Niagara properties
+        # Verify Framework properties
         self.assertEqual(info.file_path, "raw/customer_data.csv")
         self.assertEqual(info.path, "raw")
         self.assertEqual(info.name, "customer_data")

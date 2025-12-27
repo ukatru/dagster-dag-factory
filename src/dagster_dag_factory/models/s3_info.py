@@ -7,7 +7,7 @@ from datetime import datetime
 class S3Info(BaseModel):
     """
     Metadata representation of an S3 object.
-    Mirrors the Niagara S3Info model for consistent listing and filtering logic.
+    Mirrors the Framework S3Info model for consistent listing and filtering logic.
     """
 
     bucket_name: str

@@ -5,7 +5,7 @@ import json
 class ModelBase:
     """
     Base model for all configuration objects, providing sensitive field masking.
-    Following the Niagara pattern.
+    Following the Framework pattern.
     """
 
     mask_fields: List[str] = []

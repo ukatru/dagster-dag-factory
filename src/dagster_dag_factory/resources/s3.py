@@ -470,13 +470,8 @@ class S3Resource(AWSResource):
 
                 # Predicate filter
                 if predicate:
-                    if isinstance(predicate, str):
-                        # Evaluate string predicate with info context
-                        if not eval(predicate, {"info": info, "re": re}):
-                            continue
-                    elif callable(predicate):
-                        if not predicate(info):
-                            continue
+                    if not predicate(info):
+                        continue
 
                 # Callback and collection
                 index = len(infos) + 1

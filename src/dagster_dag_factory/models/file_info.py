@@ -7,7 +7,7 @@ from datetime import datetime
 @dataclass
 class FileInfo:
     """
-    Standardized file metadata, aligned with Niagara's FileInfo model.
+    Standardized file metadata, aligned with Framework's FileInfo model.
     """
 
     file_name: str

@@ -195,8 +195,9 @@ class SFTPResource(BaseConfigurableResource):
                     modified_ts=item.st_mtime,
                 )
 
-                if predicate and not predicate(info):
-                    continue
+                if predicate:
+                    if not predicate(info):
+                        continue
 
                 if on_each:
                     # Callback returns False to stop? Or just return value doesn't matter?

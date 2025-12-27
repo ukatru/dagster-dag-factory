@@ -13,7 +13,6 @@ class SFTPConfig(BaseConfigModel):
         "path",
         "pattern",
         "file_name",
-        "predicate",
         "compress_options",
     ]
 
@@ -31,6 +30,9 @@ class SFTPConfig(BaseConfigModel):
     predicate: Optional[str] = Field(
         default=None, description="Python expression for filtering files"
     )
+    predicate_template: Optional[str] = Field(
+        default=None, description="Automatically generated Jinja template for predicate"
+    )
     check_is_modifying: bool = Field(
         default=False,
         description="Check if file is still being modified before transfer",
@@ -38,3 +40,7 @@ class SFTPConfig(BaseConfigModel):
     compress_options: Optional[CompressConfig] = Field(
         default=None, description="Compression settings for upload"
     )
+
+    def model_post_init(self, __context) -> None:
+        if self.predicate:
+            self.predicate_template = "{{ " + self.predicate + " }}"
