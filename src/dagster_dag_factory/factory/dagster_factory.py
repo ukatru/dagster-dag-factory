@@ -54,8 +54,13 @@ class DagsterFactory:
         sensors_config = []
         asset_partitions = {}  # Track partitions per asset
 
+        # Determine definitions directory (support both 'pipelines' and 'defs')
+        defs_dir = self.base_dir / "pipelines"
+        if not defs_dir.exists():
+            defs_dir = self.base_dir / "defs"
+
         # Iterate YAMLs and separate assets from checks
-        for yaml_file in (self.base_dir / "defs").rglob("*.yaml"):
+        for yaml_file in defs_dir.rglob("*.yaml"):
             file_assets = 0
             file_jobs = 0
             file_sensors = 0
